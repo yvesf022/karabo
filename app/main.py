@@ -7,7 +7,7 @@ import os
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Karabo’s Boutique API")
+app = FastAPI(title="Karabo's Boutique API")
 
 app.add_middleware(
     CORSMiddleware,
