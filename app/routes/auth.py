@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.models import User
@@ -14,18 +14,18 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 # =============================
 
 class RegisterRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
     confirm_password: str
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
 
 
 # =============================
-# REGISTER (CUSTOMER ONLY)
+# REGISTER USER
 # =============================
 
 @router.post("/register", status_code=201)
@@ -37,19 +37,19 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
             detail="Passwords do not match",
         )
 
-    # 2️⃣ Check existing user
-    existing = db.query(User).filter(User.email == payload.email).first()
-    if existing:
+    # 2️⃣ Check if user already exists
+    existing_user = db.query(User).filter(User.email == payload.email).first()
+    if existing_user:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered",
         )
 
-    # 3️⃣ Create user (customer by default)
+    # 3️⃣ Create user (default role: user)
     user = User(
         email=payload.email,
         password_hash=hash_password(payload.password),
-        role="customer",
+        role="user",
         is_active=True,
     )
 
@@ -69,7 +69,7 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
 
 
 # =============================
-# LOGIN (CUSTOMER + ADMIN)
+# LOGIN USER (USER + ADMIN)
 # =============================
 
 @router.post("/login")
