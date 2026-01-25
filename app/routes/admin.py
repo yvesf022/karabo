@@ -1,13 +1,23 @@
-from fastapi import APIRouter, HTTPException
-from app.security import verify_password, create_token
-import os
+from fastapi import APIRouter, Depends
+from app.dependencies import require_admin
+from app.models import User
 
-router = APIRouter()
+router = APIRouter(prefix="/admin", tags=["admin"])
 
-@router.post("/login")
-def admin_login(data: dict):
-    if data["email"] != os.getenv("ADMIN_EMAIL"):
-        raise HTTPException(401)
-    if not verify_password(data["password"], os.getenv("ADMIN_PASSWORD_HASH")):
-        raise HTTPException(401)
-    return {"token": create_token("admin", "admin")}
+# ---------------------------------
+# ADMIN: VERIFY ACCESS
+# ---------------------------------
+@router.get("/me")
+def admin_me(admin: User = Depends(require_admin)):
+    """
+    Simple admin-only endpoint to confirm:
+    - JWT is valid
+    - User exists in DB
+    - Role === admin
+    """
+    return {
+        "id": str(admin.id),
+        "email": admin.email,
+        "role": admin.role,
+        "message": "Admin access confirmed",
+    }
