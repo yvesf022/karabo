@@ -93,4 +93,32 @@ class Payment(Base):
     admin_note = Column(String, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+from sqlalchemy import Boolean, Text
+
+# -----------------------------
+# PAYMENT SETTINGS (ADMIN EDITABLE)
+# -----------------------------
+class PaymentSetting(Base):
+    __tablename__ = "payment_settings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    method = Column(String, nullable=False)  
+    # e.g. "bank_transfer", "mobile_money"
+
+    provider_name = Column(String, nullable=False)
+    account_name = Column(String, nullable=False)
+    account_number = Column(String, nullable=False)
+
+    instructions = Column(Text, nullable=True)
+
+    is_active = Column(Boolean, default=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
 

@@ -185,3 +185,50 @@ def review_payment(
     return {
         "message": f"Payment {action}ed successfully",
     }
+from app.models import PaymentSetting
+
+# -------------------------------------------------
+# USER: GET PAYMENT INSTRUCTIONS
+# -------------------------------------------------
+@router.get("/{order_id}/payment-instructions")
+def get_payment_instructions(
+    order_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    order = db.query(Order).filter(Order.id == order_id).first()
+
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if order.customer_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your order")
+
+    setting = (
+        db.query(PaymentSetting)
+        .filter(
+            PaymentSetting.method == "bank_transfer",
+            PaymentSetting.is_active == True,
+        )
+        .first()
+    )
+
+    if not setting:
+        raise HTTPException(
+            status_code=503,
+            detail="Payment instructions not configured",
+        )
+
+    return {
+        "order_reference": order.order_reference,
+        "amount": float(order.total_amount),
+        "currency": order.currency,
+        "bank_details": {
+            "bank_name": setting.provider_name,
+            "account_name": setting.account_name,
+            "account_number": setting.account_number,
+            "reference": order.order_reference,
+            "instructions": setting.instructions,
+        },
+    }
+
