@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from app.database import Base, engine
+from app.database import Base, engine, SessionLocal
+from app.models import User
+from app.security import hash_password
 from app.routes import auth, admin, products, orders
 import os
 import logging
@@ -17,6 +19,40 @@ logger = logging.getLogger("karabo-backend")
 # --------------------------------------------------
 Base.metadata.create_all(bind=engine)
 logger.info("Database tables ensured")
+
+# --------------------------------------------------
+# PERMANENT ADMIN SEED (ENV-BASED, SAFE)
+# --------------------------------------------------
+def seed_admin():
+    email = os.getenv("ADMIN_EMAIL")
+    password = os.getenv("ADMIN_PASSWORD")
+
+    if not email or not password:
+        logger.info("ADMIN_EMAIL or ADMIN_PASSWORD not set — skipping admin seed")
+        return
+
+    db = SessionLocal()
+    try:
+        admin_user = db.query(User).filter(User.email == email).first()
+
+        if not admin_user:
+            admin_user = User(
+                email=email,
+                password_hash=hash_password(password),
+                role="admin",
+                is_active=True,
+            )
+            db.add(admin_user)
+            db.commit()
+            logger.info("✅ Permanent admin user created from env vars")
+        else:
+            logger.info("ℹ️ Admin user already exists — no action taken")
+    finally:
+        db.close()
+
+
+# Run ONCE at startup (safe & idempotent)
+seed_admin()
 
 # --------------------------------------------------
 # FASTAPI APP
@@ -39,7 +75,7 @@ app.add_middleware(
 )
 
 # --------------------------------------------------
-# UPLOAD DIRECTORIES (ALIGNED WITH ROUTES)
+# UPLOAD DIRECTORIES
 # --------------------------------------------------
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 
@@ -52,7 +88,7 @@ os.makedirs(PAYMENT_DIR, exist_ok=True)
 logger.info(f"Upload directories ready at '{UPLOAD_DIR}'")
 
 # --------------------------------------------------
-# STATIC FILES (SERVE UPLOADS)
+# STATIC FILES
 # --------------------------------------------------
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
@@ -67,7 +103,7 @@ def health():
     }
 
 # --------------------------------------------------
-# API INDEX (ACCURATE, NO LEGACY INFO)
+# API INDEX
 # --------------------------------------------------
 @app.get("/api")
 def api_index():
@@ -84,7 +120,7 @@ def api_index():
     }
 
 # --------------------------------------------------
-# ROUTES (SINGLE /api PREFIX ONLY)
+# ROUTES
 # --------------------------------------------------
 app.include_router(auth.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
