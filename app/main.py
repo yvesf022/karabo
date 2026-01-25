@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -9,13 +7,13 @@ import os
 import logging
 
 # --------------------------------------------------
-# BASIC LOGGING (helps a LOT on Render free tier)
+# BASIC LOGGING
 # --------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("karabo-backend")
 
 # --------------------------------------------------
-# DATABASE INIT (auto-create tables on deploy)
+# DATABASE INIT (AUTO CREATE TABLES)
 # --------------------------------------------------
 Base.metadata.create_all(bind=engine)
 logger.info("Database tables ensured")
@@ -30,36 +28,36 @@ app = FastAPI(
 )
 
 # --------------------------------------------------
-# CORS (open for now, tighten later)
+# CORS (OPEN FOR NOW)
 # --------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # tighten later
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # --------------------------------------------------
-# UPLOAD DIRECTORIES
+# UPLOAD DIRECTORIES (ALIGNED WITH ROUTES)
 # --------------------------------------------------
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 
 PRODUCT_DIR = os.path.join(UPLOAD_DIR, "products")
-ORDER_DIR = os.path.join(UPLOAD_DIR, "orders")
+PAYMENT_DIR = os.path.join(UPLOAD_DIR, "payments")
 
 os.makedirs(PRODUCT_DIR, exist_ok=True)
-os.makedirs(ORDER_DIR, exist_ok=True)
+os.makedirs(PAYMENT_DIR, exist_ok=True)
 
 logger.info(f"Upload directories ready at '{UPLOAD_DIR}'")
 
 # --------------------------------------------------
-# STATIC FILES
+# STATIC FILES (SERVE UPLOADS)
 # --------------------------------------------------
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # --------------------------------------------------
-# HEALTH CHECK (Render / browser friendly)
+# HEALTH CHECK
 # --------------------------------------------------
 @app.get("/")
 def health():
@@ -69,41 +67,28 @@ def health():
     }
 
 # --------------------------------------------------
-# API INDEX (IMPORTANT FOR BROWSER TESTING)
+# API INDEX (ACCURATE, NO LEGACY INFO)
 # --------------------------------------------------
 @app.get("/api")
 def api_index():
     return {
         "message": "Karabo's Boutique API is running",
-        "admin_login": "POST /api/admin/login",
-        "customer_login": "POST /api/auth/login",
+        "auth": {
+            "register": "POST /api/auth/register",
+            "login": "POST /api/auth/login",
+        },
         "products": "GET /api/products",
-        "note": "POST endpoints require JSON body",
+        "orders": "POST /api/orders",
+        "admin": "Protected routes under /api/admin/*",
+        "note": "Most endpoints require Authorization: Bearer <token>",
     }
 
 # --------------------------------------------------
-# ADMIN LOGIN INFO (PREVENTS METHOD CONFUSION)
-# --------------------------------------------------
-@app.get("/api/admin/login-info")
-def admin_login_info():
-    return {
-        "how_to_login": "Send a POST request to /api/admin/login",
-        "headers": {
-            "Content-Type": "application/json"
-        },
-        "body_example": {
-            "email": "admin@karabos.com",
-            "password": "Admin@123"
-        },
-        "note": "Opening /api/admin/login in a browser will NOT work (POST only)"
-    }
-
-# --------------------------------------------------
-# ROUTES
+# ROUTES (SINGLE /api PREFIX ONLY)
 # --------------------------------------------------
 app.include_router(auth.router, prefix="/api")
-app.include_router(admin.router, prefix="/api/admin")
-app.include_router(products.router, prefix="/api/products")
-app.include_router(orders.router, prefix="/api/orders")
+app.include_router(admin.router, prefix="/api")
+app.include_router(products.router, prefix="/api")
+app.include_router(orders.router, prefix="/api")
 
 logger.info("Routes registered successfully")

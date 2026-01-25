@@ -51,3 +51,46 @@ class Order(Base):
     shipping_status = Column(String, default="pending")
     proof_file_url = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+from sqlalchemy import Enum
+import enum
+
+# -----------------------------
+# ORDER STATUS ENUM
+# -----------------------------
+class OrderStatus(enum.Enum):
+    created = "created"
+    awaiting_payment = "awaiting_payment"
+    payment_submitted = "payment_submitted"
+    payment_verified = "payment_verified"
+    payment_rejected = "payment_rejected"
+    processing = "processing"
+    shipped = "shipped"
+    delivered = "delivered"
+    cancelled = "cancelled"
+
+
+# -----------------------------
+# PAYMENTS (MULTIPLE PER ORDER)
+# -----------------------------
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+
+    amount = Column(Numeric, nullable=False)
+    method = Column(String, nullable=False)  # bank_transfer, mobile_money, etc.
+
+    proof_file_url = Column(String, nullable=True)
+
+    status = Column(
+        String,
+        nullable=False,
+        default="submitted"  # submitted | verified | rejected
+    )
+
+    admin_note = Column(String, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
