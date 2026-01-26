@@ -38,7 +38,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # =========================
-# CORS (FINAL & SAFE)
+# CORS
 # =========================
 app.add_middleware(
     CORSMiddleware,
@@ -139,13 +139,37 @@ def migrate_orders_and_payments():
 def migrate_address_link():
     db = SessionLocal()
     try:
+        # Add UUID address_id column if missing
         db.execute(text("""
             ALTER TABLE orders
-            ADD COLUMN IF NOT EXISTS address_id VARCHAR
-            REFERENCES addresses(id) ON DELETE SET NULL;
+            ADD COLUMN IF NOT EXISTS address_id UUID;
         """))
+
+        # Drop old FK if it exists (varchar-era)
+        db.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.table_constraints
+                    WHERE constraint_name = 'orders_address_id_fkey'
+                ) THEN
+                    ALTER TABLE orders DROP CONSTRAINT orders_address_id_fkey;
+                END IF;
+            END$$;
+        """))
+
+        # Recreate FK correctly
+        db.execute(text("""
+            ALTER TABLE orders
+            ADD CONSTRAINT orders_address_id_fkey
+            FOREIGN KEY (address_id)
+            REFERENCES addresses(id)
+            ON DELETE SET NULL;
+        """))
+
         db.commit()
-        logger.info("✅ orders.address_id column verified")
+        logger.info("✅ orders.address_id UUID FK verified")
     except Exception as e:
         logger.error(f"❌ address_id migration failed: {e}")
     finally:
@@ -188,15 +212,8 @@ def startup_event():
     seed_admin()
 
 # =========================
-# ROOT & HEALTH
+# ROOT
 # =========================
 @app.get("/")
 def root():
-    return {
-        "status": "ok",
-        "message": "Karabo backend is running",
-    }
-
-@app.get("/api/auth/health")
-def auth_health():
-    return {"status": "ok"}
+    return {"status": "ok", "message": "Karabo backend is running"}
