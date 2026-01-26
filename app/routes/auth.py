@@ -23,7 +23,6 @@ def register(payload: dict, db: Session = Depends(get_db)):
             detail="Email and password are required",
         )
 
-    # Check if user already exists
     existing_user = db.query(User).filter(User.email == email).first()
     if existing_user:
         raise HTTPException(
@@ -31,7 +30,6 @@ def register(payload: dict, db: Session = Depends(get_db)):
             detail="User with this email already exists",
         )
 
-    # Create user
     user = User(
         email=email,
         password_hash=hash_password(password),
@@ -43,13 +41,13 @@ def register(payload: dict, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    # Auto-login after registration
     token = create_token(
         user_id=user.id,
         role=user.role,
     )
 
     return {
+        "message": "Account created successfully",
         "access_token": token,
         "token_type": "bearer",
         "email": user.email,
@@ -91,6 +89,7 @@ def login(payload: dict, db: Session = Depends(get_db)):
     )
 
     return {
+        "message": "Login successful",
         "access_token": token,
         "token_type": "bearer",
         "email": user.email,
@@ -115,4 +114,7 @@ def me(current_user: User = Depends(get_current_user)):
 # =========================
 @router.get("/health")
 def auth_health():
-    return {"status": "auth-ok"}
+    return {
+        "status": "auth-ok",
+        "message": "Authentication service running",
+    }
