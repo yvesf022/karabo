@@ -38,12 +38,17 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # =========================
-# CORS
+# CORS (FIXED — PROD SAFE)
 # =========================
+ALLOWED_ORIGINS = [
+    "https://kkkkkk-kappa.vercel.app",
+    "http://localhost:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -102,7 +107,7 @@ def seed_admin():
         db.close()
 
 # =========================
-# DB MIGRATIONS (RENDER SAFE)
+# DB MIGRATIONS (SAFE)
 # =========================
 def migrate_orders_and_payments():
     db = SessionLocal()
@@ -139,13 +144,11 @@ def migrate_orders_and_payments():
 def migrate_address_link():
     db = SessionLocal()
     try:
-        # Add UUID address_id column if missing
         db.execute(text("""
             ALTER TABLE orders
             ADD COLUMN IF NOT EXISTS address_id UUID;
         """))
 
-        # Drop old FK if it exists (varchar-era)
         db.execute(text("""
             DO $$
             BEGIN
@@ -159,7 +162,6 @@ def migrate_address_link():
             END$$;
         """))
 
-        # Recreate FK correctly
         db.execute(text("""
             ALTER TABLE orders
             ADD CONSTRAINT orders_address_id_fkey
