@@ -1,6 +1,4 @@
-import os
-import uuid
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -9,13 +7,10 @@ from app.dependencies import require_admin
 
 router = APIRouter(prefix="/products", tags=["products"])
 
-UPLOAD_DIR = "uploads/products"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-
-# -----------------------------
+# =============================
 # PUBLIC: LIST PRODUCTS
-# -----------------------------
+# =============================
 @router.get("")
 def list_products(db: Session = Depends(get_db)):
     products = db.query(Product).all()
@@ -27,37 +22,43 @@ def list_products(db: Session = Depends(get_db)):
             "img": p.img,
             "category": p.category,
             "rating": p.rating,
+            "stock": p.stock,
+            "in_stock": p.in_stock,
         }
         for p in products
     ]
 
 
-# -----------------------------
+# =============================
 # ADMIN: ADD PRODUCT
-# -----------------------------
+# =============================
 @router.post("")
 def add_product(
-    title: str = Form(...),
-    price: float = Form(...),
-    category: str = Form(...),
-    rating: float = Form(0),
-    image: UploadFile = File(...),
+    payload: dict,
     db: Session = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    ext = os.path.splitext(image.filename)[1]
-    filename = f"{uuid.uuid4().hex}{ext}"
-    filepath = os.path.join(UPLOAD_DIR, filename)
+    title = payload.get("title")
+    price = payload.get("price")
+    category = payload.get("category")
+    img = payload.get("img")
+    rating = payload.get("rating", 0)
+    stock = payload.get("stock", 0)
 
-    with open(filepath, "wb") as f:
-        f.write(image.file.read())
+    if not title or price is None or not category or not img:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing required product fields",
+        )
 
     product = Product(
         title=title,
         price=price,
         category=category,
+        img=img,
         rating=rating,
-        img=f"/{UPLOAD_DIR}/{filename}",
+        stock=stock,
+        in_stock=stock > 0,
     )
 
     db.add(product)
@@ -70,9 +71,40 @@ def add_product(
     }
 
 
-# -----------------------------
+# =============================
+# ADMIN: UPDATE PRODUCT
+# =============================
+@router.post("/{product_id}")
+def update_product(
+    product_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    product = db.query(Product).filter(Product.id == product_id).first()
+
+    if not product:
+        raise HTTPException(404, "Product not found")
+
+    stock_updated = False
+
+    for field in ["title", "price", "category", "img", "rating", "stock"]:
+        if field in payload:
+            setattr(product, field, payload[field])
+            if field == "stock":
+                stock_updated = True
+
+    if stock_updated:
+        product.in_stock = product.stock > 0
+
+    db.commit()
+
+    return {"message": "Product updated"}
+
+
+# =============================
 # ADMIN: DELETE PRODUCT
-# -----------------------------
+# =============================
 @router.delete("/{product_id}")
 def delete_product(
     product_id: str,
@@ -80,6 +112,7 @@ def delete_product(
     admin=Depends(require_admin),
 ):
     product = db.query(Product).filter(Product.id == product_id).first()
+
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 

@@ -21,17 +21,25 @@ from app.database import Base
 # =========================
 # ENUMS
 # =========================
-class OrderStatus(str, Enum):
+
+class PaymentStatus(str, Enum):
+    on_hold = "on_hold"
+    payment_submitted = "payment_submitted"
+    payment_received = "payment_received"
+    rejected = "rejected"
+
+
+class ShippingStatus(str, Enum):
     created = "created"
-    pending = "pending"
+    processing = "processing"
     shipped = "shipped"
     delivered = "delivered"
-    cancelled = "cancelled"
 
 
 # =========================
 # USER
 # =========================
+
 class User(Base):
     __tablename__ = "users"
 
@@ -53,6 +61,7 @@ class User(Base):
 # =========================
 # PRODUCT
 # =========================
+
 class Product(Base):
     __tablename__ = "products"
 
@@ -63,26 +72,45 @@ class Product(Base):
     category = Column(String, nullable=False)
     rating = Column(Float, default=0)
 
+    # INVENTORY
+    stock = Column(Integer, nullable=False, default=0)
+    in_stock = Column(Boolean, nullable=False, default=False)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
 # =========================
 # ORDER
 # =========================
+
 class Order(Base):
     __tablename__ = "orders"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
 
     items = Column(JSONB, nullable=False)
     total_amount = Column(Float, nullable=False)
 
-    shipping_status = Column(
-        SqlEnum(OrderStatus),
-        default=OrderStatus.created,
+    # PAYMENT FLOW
+    payment_status = Column(
+        SqlEnum(PaymentStatus),
+        default=PaymentStatus.on_hold,
         nullable=False,
     )
+
+    # SHIPPING FLOW
+    shipping_status = Column(
+        SqlEnum(ShippingStatus),
+        default=ShippingStatus.created,
+        nullable=False,
+    )
+
+    tracking_number = Column(String, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -98,6 +126,7 @@ class Order(Base):
 # =========================
 # PAYMENT
 # =========================
+
 class Payment(Base):
     __tablename__ = "payments"
 
@@ -110,7 +139,12 @@ class Payment(Base):
     )
 
     proof_url = Column(String, nullable=True)
-    approved = Column(Boolean, default=False)
+
+    status = Column(
+        SqlEnum(PaymentStatus),
+        default=PaymentStatus.on_hold,
+        nullable=False,
+    )
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -120,6 +154,7 @@ class Payment(Base):
 # =========================
 # PAYMENT SETTINGS (ADMIN)
 # =========================
+
 class PaymentSetting(Base):
     __tablename__ = "payment_settings"
 

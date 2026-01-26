@@ -28,7 +28,6 @@ app = FastAPI(
 
 # =========================
 # GLOBAL EXCEPTION HANDLER
-# (PREVENTS FAKE CORS ERRORS)
 # =========================
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -43,8 +42,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 # =========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # frontend + local + future-proof
-    allow_credentials=False,      # IMPORTANT: bearer tokens, no cookies
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -102,7 +101,7 @@ def seed_admin():
         db.close()
 
 # =========================
-# DB MIGRATION (RENDER FREE)
+# DB MIGRATIONS (RENDER FREE)
 # =========================
 def migrate_products_img_column():
     db = SessionLocal()
@@ -113,8 +112,68 @@ def migrate_products_img_column():
         """))
         db.commit()
         logger.info("✅ products.img column verified")
+    finally:
+        db.close()
+
+
+def migrate_orders_and_payments():
+    db = SessionLocal()
+    try:
+        # ORDERS
+        db.execute(text("""
+            ALTER TABLE orders
+            ADD COLUMN IF NOT EXISTS payment_status TEXT;
+        """))
+        db.execute(text("""
+            ALTER TABLE orders
+            ADD COLUMN IF NOT EXISTS shipping_status TEXT;
+        """))
+        db.execute(text("""
+            ALTER TABLE orders
+            ADD COLUMN IF NOT EXISTS tracking_number TEXT;
+        """))
+
+        # PAYMENTS
+        db.execute(text("""
+            ALTER TABLE payments
+            ADD COLUMN IF NOT EXISTS status TEXT;
+        """))
+        db.execute(text("""
+            ALTER TABLE payments
+            ADD COLUMN IF NOT EXISTS proof_url TEXT;
+        """))
+
+        db.commit()
+        logger.info("✅ orders & payments columns verified")
     except Exception as e:
-        logger.error(f"❌ products.img migration failed: {e}")
+        logger.error(f"❌ orders/payments migration failed: {e}")
+    finally:
+        db.close()
+
+
+def migrate_products_inventory():
+    db = SessionLocal()
+    try:
+        db.execute(text("""
+            ALTER TABLE products
+            ADD COLUMN IF NOT EXISTS stock INTEGER NOT NULL DEFAULT 0;
+        """))
+        db.execute(text("""
+            ALTER TABLE products
+            ADD COLUMN IF NOT EXISTS in_stock BOOLEAN NOT NULL DEFAULT FALSE;
+        """))
+
+        # Sync in_stock with stock for existing rows
+        db.execute(text("""
+            UPDATE products
+            SET in_stock = (stock > 0)
+            WHERE in_stock = FALSE;
+        """))
+
+        db.commit()
+        logger.info("✅ products stock & in_stock columns verified")
+    except Exception as e:
+        logger.error(f"❌ products inventory migration failed: {e}")
     finally:
         db.close()
 
@@ -125,6 +184,8 @@ def migrate_products_img_column():
 def startup_event():
     Base.metadata.create_all(bind=engine)
     migrate_products_img_column()
+    migrate_orders_and_payments()
+    migrate_products_inventory()
     seed_admin()
 
 # =========================
