@@ -3,6 +3,7 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.database import SessionLocal, engine
 from app.models import Base, User
@@ -24,7 +25,7 @@ app = FastAPI(
 )
 
 # =========================
-# DATABASE
+# DATABASE (CREATE TABLES)
 # =========================
 Base.metadata.create_all(bind=engine)
 
@@ -48,7 +49,7 @@ app.include_router(products.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")
 
 # =========================
-# ADMIN SEED (FIXED)
+# ADMIN SEED
 # =========================
 def seed_admin():
     email = os.getenv("ADMIN_EMAIL")
@@ -65,30 +66,49 @@ def seed_admin():
         if not admin_user:
             admin_user = User(
                 email=email,
-                password_hash=hash_password(password),  # ✅ FIXED FIELD NAME
+                password_hash=hash_password(password),
                 role="admin",
                 is_active=True,
             )
             db.add(admin_user)
             db.commit()
             logger.info("✅ Admin user created from environment variables")
-
         else:
-            # Optional: ensure existing admin is really admin
             if admin_user.role != "admin":
                 admin_user.role = "admin"
                 db.commit()
                 logger.info("ℹ️ Existing user promoted to admin")
-
-            logger.info("ℹ️ Admin user already exists — no action taken")
-
+            else:
+                logger.info("ℹ️ Admin user already exists — no action taken")
     finally:
         db.close()
 
 
+# =========================
+# SAFE DB MIGRATION (RENDER FREE)
+# =========================
+def migrate_products_img_column():
+    db = SessionLocal()
+    try:
+        db.execute(text("""
+            ALTER TABLE products
+            ADD COLUMN IF NOT EXISTS img TEXT;
+        """))
+        db.commit()
+        logger.info("✅ products.img column verified/created")
+    except Exception as e:
+        logger.error(f"❌ products.img migration failed: {e}")
+    finally:
+        db.close()
+
+
+# =========================
+# STARTUP
+# =========================
 @app.on_event("startup")
 def startup_event():
     seed_admin()
+    migrate_products_img_column()
 
 
 # =========================
