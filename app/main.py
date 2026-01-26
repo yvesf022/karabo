@@ -25,16 +25,15 @@ app = FastAPI(
 )
 
 # =========================
-# DATABASE (CREATE TABLES)
-# =========================
-Base.metadata.create_all(bind=engine)
-
-# =========================
-# CORS
+# CORS (CRITICAL FIX)
 # =========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later in production
+    allow_origins=[
+        "https://kkkkkk-kappa.vercel.app",  # ✅ Vercel frontend
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,7 +48,7 @@ app.include_router(products.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")
 
 # =========================
-# ADMIN SEED
+# ADMIN SEED (AUTO-FIX)
 # =========================
 def seed_admin():
     email = os.getenv("ADMIN_EMAIL")
@@ -74,12 +73,21 @@ def seed_admin():
             db.commit()
             logger.info("✅ Admin user created from environment variables")
         else:
+            updated = False
+
             if admin_user.role != "admin":
                 admin_user.role = "admin"
+                updated = True
+
+            if not admin_user.password_hash:
+                admin_user.password_hash = hash_password(password)
+                updated = True
+
+            if updated:
                 db.commit()
-                logger.info("ℹ️ Existing user promoted to admin")
+                logger.info("ℹ️ Existing admin credentials corrected")
             else:
-                logger.info("ℹ️ Admin user already exists — no action taken")
+                logger.info("ℹ️ Admin user already valid")
     finally:
         db.close()
 
@@ -103,12 +111,18 @@ def migrate_products_img_column():
 
 
 # =========================
-# STARTUP
+# STARTUP (ORDER MATTERS)
 # =========================
 @app.on_event("startup")
 def startup_event():
-    seed_admin()
+    # 1️⃣ Ensure tables exist
+    Base.metadata.create_all(bind=engine)
+
+    # 2️⃣ Fix schema mismatch
     migrate_products_img_column()
+
+    # 3️⃣ Seed / repair admin
+    seed_admin()
 
 
 # =========================
