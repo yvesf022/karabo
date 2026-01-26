@@ -1,8 +1,7 @@
-import uuid
 import os
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.orm import Session
-from sqlalchemy import select
 
 from app.database import get_db
 from app.models import Order, Payment, OrderStatus
@@ -14,9 +13,10 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 UPLOAD_DIR = "uploads/payments"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# -------------------------------------------------
-# CREATE ORDER (NO PAYMENT YET)
-# -------------------------------------------------
+
+# -----------------------------
+# USER: CREATE ORDER
+# -----------------------------
 @router.post("")
 def create_order(
     payload: dict,
@@ -24,24 +24,19 @@ def create_order(
     user: User = Depends(get_current_user),
 ):
     items = payload.get("items")
-    delivery_address = payload.get("delivery_address")
     total_amount = payload.get("total_amount")
 
-    if not items or not delivery_address or not total_amount:
+    if not items or not total_amount:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing order data",
         )
 
-    order_ref = f"ORD-{uuid.uuid4().hex[:10].upper()}"
-
     order = Order(
-        order_reference=order_ref,
-        customer_id=user.id,
+        user_id=user.id,
         items=items,
-        delivery_address=delivery_address,
         total_amount=total_amount,
-        status=OrderStatus.awaiting_payment,
+        shipping_status=OrderStatus.created,
     )
 
     db.add(order)
@@ -49,21 +44,17 @@ def create_order(
     db.refresh(order)
 
     return {
-        "order_id": str(order.id),
-        "order_reference": order.order_reference,
-        "status": order.status.value,
-        "message": "Order created. Awaiting payment.",
+        "order_id": order.id,
+        "status": order.shipping_status.value,
     }
 
 
-# -------------------------------------------------
-# SUBMIT PAYMENT PROOF (MULTIPLE ALLOWED)
-# -------------------------------------------------
-@router.post("/{order_id}/payments")
+# -----------------------------
+# USER: UPLOAD PAYMENT PROOF
+# -----------------------------
+@router.post("/{order_id}/payment-proof")
 def submit_payment_proof(
     order_id: str,
-    amount: float,
-    method: str,
     proof: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -73,162 +64,89 @@ def submit_payment_proof(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    if order.customer_id != user.id:
+    if order.user_id != user.id:
         raise HTTPException(status_code=403, detail="Not your order")
 
-    if order.status == OrderStatus.cancelled:
-        raise HTTPException(status_code=400, detail="Order cancelled")
-
-    # Save proof file
     ext = os.path.splitext(proof.filename)[1]
     filename = f"{uuid.uuid4().hex}{ext}"
-    file_path = os.path.join(UPLOAD_DIR, filename)
+    filepath = os.path.join(UPLOAD_DIR, filename)
 
-    with open(file_path, "wb") as f:
+    with open(filepath, "wb") as f:
         f.write(proof.file.read())
 
     payment = Payment(
         order_id=order.id,
-        user_id=user.id,
-        amount=amount,
-        method=method,
-        proof_file_url=file_path,
-        status="submitted",
+        proof_url=f"/{UPLOAD_DIR}/{filename}",
+        approved=False,
     )
 
-    order.status = OrderStatus.payment_submitted
+    order.shipping_status = OrderStatus.pending
 
     db.add(payment)
     db.commit()
 
-    return {
-        "message": "Payment proof submitted. Awaiting admin verification.",
-    }
+    return {"message": "Payment proof submitted"}
 
 
-# -------------------------------------------------
-# USER: VIEW MY ORDERS
-# -------------------------------------------------
+# -----------------------------
+# USER: MY ORDERS
+# -----------------------------
 @router.get("/my")
-def get_my_orders(
+def my_orders(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    orders = db.query(Order).filter(Order.customer_id == user.id).all()
+    orders = db.query(Order).filter(Order.user_id == user.id).all()
 
     return [
         {
-            "id": str(o.id),
-            "reference": o.order_reference,
-            "status": o.status.value,
-            "total": float(o.total_amount),
+            "id": o.id,
+            "total": o.total_amount,
+            "status": o.shipping_status.value,
             "created_at": o.created_at,
         }
         for o in orders
     ]
 
 
-# -------------------------------------------------
-# ADMIN: VIEW PENDING PAYMENTS
-# -------------------------------------------------
-@router.get("/admin/pending-payments")
-def get_pending_payments(
+# -----------------------------
+# ADMIN: ALL ORDERS
+# -----------------------------
+@router.get("/admin")
+def admin_orders(
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin=Depends(require_admin),
 ):
-    payments = db.query(Payment).filter(Payment.status == "submitted").all()
-
+    orders = db.query(Order).all()
     return [
         {
-            "payment_id": str(p.id),
-            "order_id": str(p.order_id),
-            "amount": float(p.amount),
-            "method": p.method,
-            "proof": p.proof_file_url,
-            "created_at": p.created_at,
+            "id": o.id,
+            "user_id": o.user_id,
+            "total": o.total_amount,
+            "status": o.shipping_status.value,
         }
-        for p in payments
+        for o in orders
     ]
 
 
-# -------------------------------------------------
-# ADMIN: VERIFY / REJECT PAYMENT
-# -------------------------------------------------
-@router.post("/admin/payments/{payment_id}")
-def review_payment(
-    payment_id: str,
-    action: str,  # verify | reject
-    note: str | None = None,
-    db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
-):
-    payment = db.query(Payment).filter(Payment.id == payment_id).first()
-
-    if not payment:
-        raise HTTPException(status_code=404, detail="Payment not found")
-
-    order = db.query(Order).filter(Order.id == payment.order_id).first()
-
-    if action == "verify":
-        payment.status = "verified"
-        order.status = OrderStatus.payment_verified
-    elif action == "reject":
-        payment.status = "rejected"
-        order.status = OrderStatus.payment_rejected
-    else:
-        raise HTTPException(status_code=400, detail="Invalid action")
-
-    payment.admin_note = note
-
-    db.commit()
-
-    return {
-        "message": f"Payment {action}ed successfully",
-    }
-from app.models import PaymentSetting
-
-# -------------------------------------------------
-# USER: GET PAYMENT INSTRUCTIONS
-# -------------------------------------------------
-@router.get("/{order_id}/payment-instructions")
-def get_payment_instructions(
+# -----------------------------
+# ADMIN: UPDATE SHIPPING STATUS
+# -----------------------------
+@router.post("/admin/{order_id}/status")
+def update_shipping_status(
     order_id: str,
+    status_value: OrderStatus,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    admin=Depends(require_admin),
 ):
     order = db.query(Order).filter(Order.id == order_id).first()
-
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    if order.customer_id != user.id:
-        raise HTTPException(status_code=403, detail="Not your order")
-
-    setting = (
-        db.query(PaymentSetting)
-        .filter(
-            PaymentSetting.method == "bank_transfer",
-            PaymentSetting.is_active == True,
-        )
-        .first()
-    )
-
-    if not setting:
-        raise HTTPException(
-            status_code=503,
-            detail="Payment instructions not configured",
-        )
+    order.shipping_status = status_value
+    db.commit()
 
     return {
-        "order_reference": order.order_reference,
-        "amount": float(order.total_amount),
-        "currency": order.currency,
-        "bank_details": {
-            "bank_name": setting.provider_name,
-            "account_name": setting.account_name,
-            "account_number": setting.account_number,
-            "reference": order.order_reference,
-            "instructions": setting.instructions,
-        },
+        "order_id": order.id,
+        "new_status": order.shipping_status.value,
     }
-

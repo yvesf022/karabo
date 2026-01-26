@@ -1,28 +1,55 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from app.database import Base, engine, SessionLocal
-from app.models import User
-from app.security import hash_password
-from app.routes import auth, admin, products, orders
 import os
 import logging
 
-# --------------------------------------------------
-# BASIC LOGGING
-# --------------------------------------------------
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.database import SessionLocal, engine
+from app.models import Base, User
+from app.security import hash_password
+from app.routes import auth, admin, products, orders
+
+# =========================
+# LOGGING
+# =========================
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("karabo-backend")
+logger = logging.getLogger(__name__)
 
-# --------------------------------------------------
-# DATABASE INIT (AUTO CREATE TABLES)
-# --------------------------------------------------
+# =========================
+# APP INIT
+# =========================
+app = FastAPI(
+    title="Karabo E-Commerce API",
+    version="1.0.0",
+)
+
+# =========================
+# DATABASE
+# =========================
 Base.metadata.create_all(bind=engine)
-logger.info("Database tables ensured")
 
-# --------------------------------------------------
-# PERMANENT ADMIN SEED (ENV-BASED, SAFE)
-# --------------------------------------------------
+# =========================
+# CORS
+# =========================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten later in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# =========================
+# ROUTES
+# =========================
+app.include_router(auth.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
+app.include_router(products.router, prefix="/api")
+app.include_router(orders.router, prefix="/api")
+
+# =========================
+# ADMIN SEED (FIXED)
+# =========================
 def seed_admin():
     email = os.getenv("ADMIN_EMAIL")
     password = os.getenv("ADMIN_PASSWORD")
@@ -38,93 +65,55 @@ def seed_admin():
         if not admin_user:
             admin_user = User(
                 email=email,
-                password_hash=hash_password(password),
+                password_hash=hash_password(password),  # ✅ FIXED FIELD NAME
                 role="admin",
                 is_active=True,
             )
             db.add(admin_user)
             db.commit()
-            logger.info("✅ Permanent admin user created from env vars")
+            logger.info("✅ Admin user created from environment variables")
+
         else:
+            # Optional: ensure existing admin is really admin
+            if admin_user.role != "admin":
+                admin_user.role = "admin"
+                db.commit()
+                logger.info("ℹ️ Existing user promoted to admin")
+
             logger.info("ℹ️ Admin user already exists — no action taken")
+
     finally:
         db.close()
 
 
-# Run ONCE at startup (safe & idempotent)
-seed_admin()
+@app.on_event("startup")
+def startup_event():
+    seed_admin()
 
-# --------------------------------------------------
-# FASTAPI APP
-# --------------------------------------------------
-app = FastAPI(
-    title="Karabo's Boutique API",
-    description="Backend API for Karabo's Boutique (Render + Netlify)",
-    version="1.0.0",
-)
 
-# --------------------------------------------------
-# CORS (OPEN FOR NOW)
-# --------------------------------------------------
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # tighten later
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --------------------------------------------------
-# UPLOAD DIRECTORIES
-# --------------------------------------------------
-UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
-
-PRODUCT_DIR = os.path.join(UPLOAD_DIR, "products")
-PAYMENT_DIR = os.path.join(UPLOAD_DIR, "payments")
-
-os.makedirs(PRODUCT_DIR, exist_ok=True)
-os.makedirs(PAYMENT_DIR, exist_ok=True)
-
-logger.info(f"Upload directories ready at '{UPLOAD_DIR}'")
-
-# --------------------------------------------------
-# STATIC FILES
-# --------------------------------------------------
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
-
-# --------------------------------------------------
-# HEALTH CHECK
-# --------------------------------------------------
+# =========================
+# ROOT & HEALTH
+# =========================
 @app.get("/")
-def health():
+def root():
     return {
         "status": "ok",
-        "service": "Karabo's Boutique API",
+        "message": "Karabo backend is running",
     }
 
-# --------------------------------------------------
-# API INDEX
-# --------------------------------------------------
+
 @app.get("/api")
 def api_index():
     return {
-        "message": "Karabo's Boutique API is running",
         "auth": {
-            "register": "POST /api/auth/register",
             "login": "POST /api/auth/login",
+            "register": "POST /api/auth/register",
+            "me": "GET /api/auth/me",
+        },
+        "admin": {
+            "me": "GET /api/admin/me",
+            "payment_settings": "GET/POST /api/admin/payment-settings",
         },
         "products": "GET /api/products",
-        "orders": "POST /api/orders",
-        "admin": "Protected routes under /api/admin/*",
-        "note": "Most endpoints require Authorization: Bearer <token>",
+        "orders": "GET /api/orders",
     }
-
-# --------------------------------------------------
-# ROUTES
-# --------------------------------------------------
-app.include_router(auth.router, prefix="/api")
-app.include_router(admin.router, prefix="/api")
-app.include_router(products.router, prefix="/api")
-app.include_router(orders.router, prefix="/api")
-
-logger.info("Routes registered successfully")
