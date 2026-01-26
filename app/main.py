@@ -1,8 +1,10 @@
 import os
 import logging
+import traceback
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.database import SessionLocal, engine
@@ -25,16 +27,24 @@ app = FastAPI(
 )
 
 # =========================
-# CORS (CRITICAL FIX)
+# GLOBAL EXCEPTION HANDLER
+# (PREVENTS FAKE CORS ERRORS)
+# =========================
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"error": str(exc)},
+    )
+
+# =========================
+# CORS (FINAL & SAFE)
 # =========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://kkkkkk-kappa.vercel.app",  # ✅ Vercel frontend
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],          # frontend + local + future-proof
+    allow_credentials=False,      # IMPORTANT: bearer tokens, no cookies
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -48,7 +58,7 @@ app.include_router(products.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")
 
 # =========================
-# ADMIN SEED (AUTO-FIX)
+# ADMIN SEED
 # =========================
 def seed_admin():
     email = os.getenv("ADMIN_EMAIL")
@@ -71,7 +81,7 @@ def seed_admin():
             )
             db.add(admin_user)
             db.commit()
-            logger.info("✅ Admin user created from environment variables")
+            logger.info("✅ Admin user created")
         else:
             updated = False
 
@@ -85,15 +95,14 @@ def seed_admin():
 
             if updated:
                 db.commit()
-                logger.info("ℹ️ Existing admin credentials corrected")
+                logger.info("ℹ️ Admin user repaired")
             else:
                 logger.info("ℹ️ Admin user already valid")
     finally:
         db.close()
 
-
 # =========================
-# SAFE DB MIGRATION (RENDER FREE)
+# DB MIGRATION (RENDER FREE)
 # =========================
 def migrate_products_img_column():
     db = SessionLocal()
@@ -103,27 +112,20 @@ def migrate_products_img_column():
             ADD COLUMN IF NOT EXISTS img TEXT;
         """))
         db.commit()
-        logger.info("✅ products.img column verified/created")
+        logger.info("✅ products.img column verified")
     except Exception as e:
         logger.error(f"❌ products.img migration failed: {e}")
     finally:
         db.close()
 
-
 # =========================
-# STARTUP (ORDER MATTERS)
+# STARTUP
 # =========================
 @app.on_event("startup")
 def startup_event():
-    # 1️⃣ Ensure tables exist
     Base.metadata.create_all(bind=engine)
-
-    # 2️⃣ Fix schema mismatch
     migrate_products_img_column()
-
-    # 3️⃣ Seed / repair admin
     seed_admin()
-
 
 # =========================
 # ROOT & HEALTH
@@ -135,19 +137,6 @@ def root():
         "message": "Karabo backend is running",
     }
 
-
-@app.get("/api")
-def api_index():
-    return {
-        "auth": {
-            "login": "POST /api/auth/login",
-            "register": "POST /api/auth/register",
-            "me": "GET /api/auth/me",
-        },
-        "admin": {
-            "me": "GET /api/admin/me",
-            "payment_settings": "GET/POST /api/admin/payment-settings",
-        },
-        "products": "GET /api/products",
-        "orders": "GET /api/orders",
-    }
+@app.get("/api/auth/health")
+def auth_health():
+    return {"status": "ok"}
