@@ -5,12 +5,13 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.database import SessionLocal, engine
 from app.models import Base, User
 from app.security import hash_password
-from app.routes import auth, admin, products, orders
+from app.routes import auth, admin, products, orders, users
 
 # =========================
 # LOGGING
@@ -49,9 +50,19 @@ app.add_middleware(
 )
 
 # =========================
+# STATIC FILES (AVATARS, MEDIA)
+# =========================
+app.mount(
+    "/static",
+    StaticFiles(directory="static"),
+    name="static",
+)
+
+# =========================
 # ROUTES
 # =========================
 app.include_router(auth.router, prefix="/api")
+app.include_router(users.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(products.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")
@@ -103,19 +114,6 @@ def seed_admin():
 # =========================
 # DB MIGRATIONS (RENDER FREE)
 # =========================
-def migrate_products_img_column():
-    db = SessionLocal()
-    try:
-        db.execute(text("""
-            ALTER TABLE products
-            ADD COLUMN IF NOT EXISTS img TEXT;
-        """))
-        db.commit()
-        logger.info("✅ products.img column verified")
-    finally:
-        db.close()
-
-
 def migrate_orders_and_payments():
     db = SessionLocal()
     try:
@@ -150,6 +148,23 @@ def migrate_orders_and_payments():
     finally:
         db.close()
 
+# =========================
+# ADD ADDRESS ID TO ORDERS (NEW MIGRATION)
+# =========================
+def migrate_address_link():
+    db = SessionLocal()
+    try:
+        db.execute(text("""
+            ALTER TABLE orders
+            ADD COLUMN IF NOT EXISTS address_id VARCHAR
+            REFERENCES addresses(id) ON DELETE SET NULL;
+        """))
+        db.commit()
+        logger.info("✅ orders.address_id column verified")
+    except Exception as e:
+        logger.error(f"❌ address_id migration failed: {e}")
+    finally:
+        db.close()
 
 def migrate_products_inventory():
     db = SessionLocal()
@@ -163,7 +178,6 @@ def migrate_products_inventory():
             ADD COLUMN IF NOT EXISTS in_stock BOOLEAN NOT NULL DEFAULT FALSE;
         """))
 
-        # Sync in_stock with stock for existing rows
         db.execute(text("""
             UPDATE products
             SET in_stock = (stock > 0)
@@ -185,6 +199,7 @@ def startup_event():
     Base.metadata.create_all(bind=engine)
     migrate_products_img_column()
     migrate_orders_and_payments()
+    migrate_address_link()  # New migration step for address linking
     migrate_products_inventory()
     seed_admin()
 

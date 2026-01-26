@@ -21,7 +21,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 # =====================================================
-# USER: CREATE ORDER (WITH STOCK ENFORCEMENT)
+# USER: CREATE ORDER
 # =====================================================
 @router.post("", status_code=201)
 def create_order(
@@ -31,11 +31,19 @@ def create_order(
 ):
     items = payload.get("items")
     total_amount = payload.get("total_amount")
+    address_id = payload.get("address_id")  # Retrieve address_id
 
     if not items or not total_amount:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing order data",
+        )
+
+    # Ensure address_id exists and is valid
+    if not address_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Address ID is required",
         )
 
     products_to_update = []
@@ -45,10 +53,7 @@ def create_order(
         quantity = item.get("quantity", 0)
 
         if not product_id or quantity <= 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid item data",
-            )
+            raise HTTPException(400, "Invalid item data")
 
         product = (
             db.query(Product)
@@ -58,15 +63,11 @@ def create_order(
         )
 
         if not product:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Product {product_id} not found",
-            )
+            raise HTTPException(404, f"Product {product_id} not found")
 
         if product.stock < quantity:
             raise HTTPException(
-                status_code=400,
-                detail=f"Insufficient stock for {product.title}",
+                400, f"Insufficient stock for {product.title}"
             )
 
         products_to_update.append((product, quantity))
@@ -77,6 +78,7 @@ def create_order(
         total_amount=total_amount,
         payment_status=PaymentStatus.on_hold,
         shipping_status=ShippingStatus.created,
+        address_id=address_id,  # Store address_id with the order
     )
 
     db.add(order)
@@ -95,6 +97,34 @@ def create_order(
 
 
 # =====================================================
+# USER: ORDER DETAIL
+# =====================================================
+@router.get("/{order_id}")
+def user_order_detail(
+    order_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    order = db.query(Order).filter(Order.id == order_id).first()
+
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    if order.user_id != user.id:
+        raise HTTPException(403, "Not authorized")
+
+    return {
+        "id": order.id,
+        "items": order.items,
+        "total_amount": order.total_amount,
+        "payment_status": order.payment_status.value,
+        "shipping_status": order.shipping_status.value,
+        "tracking_number": order.tracking_number,
+        "created_at": order.created_at,
+    }
+
+
+# =====================================================
 # USER: UPLOAD PAYMENT PROOF
 # =====================================================
 @router.post("/{order_id}/payment-proof")
@@ -107,15 +137,14 @@ def submit_payment_proof(
     order = db.query(Order).filter(Order.id == order_id).first()
 
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+        raise HTTPException(404, "Order not found")
 
     if order.user_id != user.id:
-        raise HTTPException(status_code=403, detail="Not your order")
+        raise HTTPException(403, "Not your order")
 
     if order.payment_status != PaymentStatus.on_hold:
         raise HTTPException(
-            status_code=400,
-            detail="Payment already submitted or processed",
+            400, "Payment already submitted or processed"
         )
 
     ext = os.path.splitext(proof.filename)[1]
@@ -163,57 +192,7 @@ def my_orders(
 
 
 # =====================================================
-# ADMIN: ALL ORDERS
-# =====================================================
-@router.get("/admin")
-def admin_orders(
-    db: Session = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    orders = db.query(Order).all()
-
-    return [
-        {
-            "id": o.id,
-            "user_email": o.user.email,
-            "total_amount": o.total_amount,
-            "payment_status": o.payment_status.value,
-            "shipping_status": o.shipping_status.value,
-            "created_at": o.created_at,
-        }
-        for o in orders
-    ]
-
-
-# =====================================================
-# ADMIN: SINGLE ORDER
-# =====================================================
-@router.get("/admin/{order_id}")
-def admin_order_detail(
-    order_id: str,
-    db: Session = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    order = db.query(Order).filter(Order.id == order_id).first()
-
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-
-    return {
-        "id": order.id,
-        "user_email": order.user.email,
-        "items": order.items,
-        "total_amount": order.total_amount,
-        "payment_status": order.payment_status.value,
-        "shipping_status": order.shipping_status.value,
-        "tracking_number": order.tracking_number,
-        "payment_proof": order.payment.proof_url if order.payment else None,
-        "created_at": order.created_at,
-    }
-
-
-# =====================================================
-# ADMIN: UPDATE PAYMENT / SHIPPING / TRACKING
+# ADMIN: UPDATE ORDER (STRICT FLOW)
 # =====================================================
 @router.post("/admin/{order_id}/update")
 def admin_update_order(
@@ -225,32 +204,39 @@ def admin_update_order(
     order = db.query(Order).filter(Order.id == order_id).first()
 
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-
-    old_payment_status = order.payment_status
+        raise HTTPException(404, "Order not found")
 
     payment_status = payload.get("status")
     shipping_status = payload.get("shipping_status")
     tracking_number = payload.get("tracking_number")
 
-    # ---- PAYMENT STATUS ----
+    # ---- PAYMENT REVIEW ----
     if payment_status:
+        if order.payment_status != PaymentStatus.payment_submitted:
+            raise HTTPException(
+                400,
+                "Payment can only be reviewed after proof submission",
+            )
+
         try:
             new_status = PaymentStatus(payment_status)
         except ValueError:
             raise HTTPException(400, "Invalid payment status")
 
-        # 🔥 STOCK ROLLBACK ON REJECTION (IDEMPOTENT)
-        if (
-            new_status == PaymentStatus.rejected
-            and old_payment_status != PaymentStatus.rejected
+        if new_status not in (
+            PaymentStatus.payment_received,
+            PaymentStatus.rejected,
         ):
+            raise HTTPException(
+                400,
+                "Admin can only approve or reject payment",
+            )
+
+        # 🔥 STOCK ROLLBACK ON REJECTION
+        if new_status == PaymentStatus.rejected:
             for item in order.items:
                 product_id = item.get("product_id")
                 quantity = item.get("quantity", 0)
-
-                if not product_id or quantity <= 0:
-                    continue
 
                 product = (
                     db.query(Product)
@@ -268,20 +254,18 @@ def admin_update_order(
         if order.payment:
             order.payment.status = new_status
 
-    # ---- SHIPPING STATUS ----
+    # ---- SHIPPING ----
     if shipping_status:
-        try:
-            new_shipping = ShippingStatus(shipping_status)
-        except ValueError:
-            raise HTTPException(400, "Invalid shipping status")
-
         if order.payment_status != PaymentStatus.payment_received:
             raise HTTPException(
                 400,
-                "Cannot ship before payment is received",
+                "Cannot ship before payment approval",
             )
 
-        order.shipping_status = new_shipping
+        try:
+            order.shipping_status = ShippingStatus(shipping_status)
+        except ValueError:
+            raise HTTPException(400, "Invalid shipping status")
 
     # ---- TRACKING ----
     if tracking_number is not None:
