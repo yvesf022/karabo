@@ -5,7 +5,6 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.database import SessionLocal, engine
@@ -47,15 +46,6 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
-)
-
-# =========================
-# STATIC FILES (AVATARS, MEDIA)
-# =========================
-app.mount(
-    "/static",
-    StaticFiles(directory="static"),
-    name="static",
 )
 
 # =========================
@@ -112,12 +102,11 @@ def seed_admin():
         db.close()
 
 # =========================
-# DB MIGRATIONS (RENDER FREE)
+# DB MIGRATIONS (RENDER SAFE)
 # =========================
 def migrate_orders_and_payments():
     db = SessionLocal()
     try:
-        # ORDERS
         db.execute(text("""
             ALTER TABLE orders
             ADD COLUMN IF NOT EXISTS payment_status TEXT;
@@ -131,7 +120,6 @@ def migrate_orders_and_payments():
             ADD COLUMN IF NOT EXISTS tracking_number TEXT;
         """))
 
-        # PAYMENTS
         db.execute(text("""
             ALTER TABLE payments
             ADD COLUMN IF NOT EXISTS status TEXT;
@@ -148,9 +136,6 @@ def migrate_orders_and_payments():
     finally:
         db.close()
 
-# =========================
-# ADD ADDRESS ID TO ORDERS (NEW MIGRATION)
-# =========================
 def migrate_address_link():
     db = SessionLocal()
     try:
@@ -197,9 +182,8 @@ def migrate_products_inventory():
 @app.on_event("startup")
 def startup_event():
     Base.metadata.create_all(bind=engine)
-    migrate_products_img_column()
     migrate_orders_and_payments()
-    migrate_address_link()  # New migration step for address linking
+    migrate_address_link()
     migrate_products_inventory()
     seed_admin()
 
