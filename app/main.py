@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# 🔴 THIS LINE IS THE KEY
-import app.models  # noqa: F401  (forces model registration)
+# 🔴 FORCE MODEL REGISTRATION
+import app.models  # noqa: F401
 
 from app.database import engine
 from app.models import Base
@@ -27,7 +27,7 @@ app.add_middleware(
 )
 
 # =========================
-# CREATE TABLES (NOW WORKS)
+# CREATE TABLES
 # =========================
 Base.metadata.create_all(bind=engine)
 
@@ -35,7 +35,7 @@ Base.metadata.create_all(bind=engine)
 # ROUTES
 # =========================
 app.include_router(auth_router)
-app.include_router(products.router, prefix="/api/products", tags=["products"])
+app.include_router(products.router, prefix="/api", tags=["products"])
 app.include_router(orders.router, prefix="/api/orders", tags=["orders"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
