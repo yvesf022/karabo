@@ -1,15 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# 🔴 THIS LINE IS THE KEY
+import app.models  # noqa: F401  (forces model registration)
+
 from app.database import engine
 from app.models import Base
-from app.routes import products, orders, users, admin
+
 from app.auth import router as auth_router
+from app.routes import products, orders, users, admin
 
 app = FastAPI(title="Karabo API")
 
 # =========================
-# ✅ CORS (MUST BE FIRST)
+# CORS
 # =========================
 app.add_middleware(
     CORSMiddleware,
@@ -23,12 +27,12 @@ app.add_middleware(
 )
 
 # =========================
-# ✅ CREATE TABLES (CRITICAL)
+# CREATE TABLES (NOW WORKS)
 # =========================
 Base.metadata.create_all(bind=engine)
 
 # =========================
-# ROUTERS
+# ROUTES
 # =========================
 app.include_router(auth_router)
 app.include_router(products.router, prefix="/api/products", tags=["products"])
