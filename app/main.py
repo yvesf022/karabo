@@ -9,27 +9,21 @@ from app.routes.admin import router as admin_router
 
 app = FastAPI(title="Karabo API")
 
-# =========================
-# CORS (REQUIRED FOR VERCEL)
-# =========================
+# 🔐 CORS — THIS IS THE FIX
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later
+    allow_origins=[
+        "http://localhost:3000",
+        "https://kkkkkk-kappa.vercel.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# =========================
-# ROUTES
-# =========================
-app.include_router(auth_router)
-app.include_router(products_router)
-app.include_router(orders_router)
-app.include_router(users_router)
-app.include_router(admin_router)
-
-
-@app.get("/")
-def health():
-    return {"status": "ok"}
+# Routes
+app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
+app.include_router(products_router, prefix="/api/products", tags=["Products"])
+app.include_router(orders_router, prefix="/api/orders", tags=["Orders"])
+app.include_router(users_router, prefix="/api/users", tags=["Users"])
+app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
