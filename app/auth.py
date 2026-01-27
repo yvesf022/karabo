@@ -33,7 +33,6 @@ def login(payload: LoginPayload, response: Response, db: Session = Depends(get_d
 
     token = create_token(user.id, user.role)
 
-    # ✅ Set cookie AFTER successful token creation
     response.set_cookie(
         key="access_token",
         value=token,
@@ -52,16 +51,29 @@ def register(payload: RegisterPayload, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == payload.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    user = User(
-        email=payload.email,
-        password_hash=hash_password(payload.password),
-        full_name=payload.full_name,
-        phone=payload.phone,
-        role="user",
-        is_active=True,
-    )
+    try:
+        user = User(
+            email=payload.email,
+            password_hash=hash_password(payload.password),
+            full_name=payload.full_name,
+            phone=payload.phone,
+            role="user",
+            is_active=True,
+        )
 
-    db.add(user)
-    db.commit()
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create user",
+        )
 
     return {"message": "Account created"}
