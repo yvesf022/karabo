@@ -4,14 +4,14 @@ from pydantic import BaseModel, EmailStr
 
 from app.database import get_db
 from app.models import User
-from app.security import verify_password, hash_password, create_access_token
+from app.security import verify_password, hash_password, create_token
 
-router = APIRouter()
+router = APIRouter(prefix="/api/auth", tags=["Auth"])
+
 
 # =========================
 # SCHEMAS
 # =========================
-
 class LoginPayload(BaseModel):
     email: EmailStr
     password: str
@@ -24,17 +24,10 @@ class RegisterPayload(BaseModel):
     phone: str | None = None
 
 
-class AuthResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    role: str
-
-
 # =========================
 # LOGIN
 # =========================
-
-@router.post("/login", response_model=AuthResponse)
+@router.post("/login")
 def login(payload: LoginPayload, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
 
@@ -44,12 +37,17 @@ def login(payload: LoginPayload, db: Session = Depends(get_db)):
             detail="Invalid email or password",
         )
 
-    token = create_access_token(
-        data={"sub": user.id, "role": user.role}
-    )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account disabled",
+        )
+
+    token = create_token(user.id, user.role)
 
     return {
         "access_token": token,
+        "token_type": "bearer",
         "role": user.role,
     }
 
@@ -57,12 +55,13 @@ def login(payload: LoginPayload, db: Session = Depends(get_db)):
 # =========================
 # REGISTER
 # =========================
-
-@router.post("/register", response_model=AuthResponse)
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterPayload, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.email == payload.email).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
+    if db.query(User).filter(User.email == payload.email).first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
 
     user = User(
         email=payload.email,
@@ -77,11 +76,4 @@ def register(payload: RegisterPayload, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    token = create_access_token(
-        data={"sub": user.id, "role": user.role}
-    )
-
-    return {
-        "access_token": token,
-        "role": user.role,
-    }
+    return {"message": "Account created successfully"}
