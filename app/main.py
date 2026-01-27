@@ -1,14 +1,16 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.auth import router as auth_router
+from app.database import engine
+from app.models import Base
 from app.routes import products, orders, users, admin
+from app.auth import router as auth_router
 
-app = FastAPI()
+app = FastAPI(title="Karabo API")
 
-# =========================================================
-# CORS — MUST BE FIRST
-# =========================================================
+# =========================
+# ✅ CORS (MUST BE FIRST)
+# =========================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -20,13 +22,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =========================================================
-# ROUTES
-# =========================================================
+# =========================
+# ✅ CREATE TABLES (CRITICAL)
+# =========================
+Base.metadata.create_all(bind=engine)
 
-# ❗ auth_router already has /api/auth prefix internally
-app.include_router(auth_router, tags=["auth"])
-
+# =========================
+# ROUTERS
+# =========================
+app.include_router(auth_router)
 app.include_router(products.router, prefix="/api/products", tags=["products"])
 app.include_router(orders.router, prefix="/api/orders", tags=["orders"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
@@ -34,5 +38,5 @@ app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 
 
 @app.get("/")
-def health_check():
+def root():
     return {"status": "ok"}
