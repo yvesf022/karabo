@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 
@@ -28,7 +28,11 @@ class RegisterPayload(BaseModel):
 # LOGIN
 # =========================
 @router.post("/login")
-def login(payload: LoginPayload, db: Session = Depends(get_db)):
+def login(
+    payload: LoginPayload,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     user = db.query(User).filter(User.email == payload.email).first()
 
     if not user or not verify_password(payload.password, user.password_hash):
@@ -45,8 +49,19 @@ def login(payload: LoginPayload, db: Session = Depends(get_db)):
 
     token = create_token(user.id, user.role)
 
+    # 🔐 Set JWT as httpOnly cookie
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+        max_age=60 * 60 * 24 * 7,  # 7 days
+    )
+
     return {
-        "access_token": token,
+        "access_token": token,   # kept for backward compatibility
         "token_type": "bearer",
         "role": user.role,
     }
