@@ -13,7 +13,6 @@ ACCESS_TOKEN_EXPIRE_DAYS = 7
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# bcrypt hard limit: 72 BYTES (not characters)
 BCRYPT_MAX_BYTES = 72
 
 
@@ -35,9 +34,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
-def create_token(user_id: str, role: str) -> str:
+def create_token(user_id, role: str) -> str:
     payload = {
-        "sub": user_id,
+        # 🔴 UUID → str (CRITICAL FIX)
+        "sub": str(user_id),
         "role": role,
         "exp": datetime.utcnow() + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS),
     }
