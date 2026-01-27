@@ -38,7 +38,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # =========================
-# CORS (FIXED — PROD SAFE)
+# CORS (PROD SAFE)
 # =========================
 ALLOWED_ORIGINS = [
     "https://kkkkkk-kappa.vercel.app",
@@ -107,54 +107,58 @@ def seed_admin():
         db.close()
 
 # =========================
-# DB MIGRATIONS (SAFE)
+# SAFE STARTUP MIGRATIONS
 # =========================
+def migrate_users():
+    with engine.begin() as conn:
+        conn.execute(text("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS full_name VARCHAR;
+        """))
+        conn.execute(text("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS phone VARCHAR;
+        """))
+        conn.execute(text("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS avatar_url VARCHAR;
+        """))
+        logger.info("✅ users columns verified")
+
 def migrate_orders_and_payments():
-    db = SessionLocal()
-    try:
-        db.execute(text("""
+    with engine.begin() as conn:
+        conn.execute(text("""
             ALTER TABLE orders
             ADD COLUMN IF NOT EXISTS payment_status TEXT;
         """))
-        db.execute(text("""
+        conn.execute(text("""
             ALTER TABLE orders
             ADD COLUMN IF NOT EXISTS shipping_status TEXT;
         """))
-        db.execute(text("""
+        conn.execute(text("""
             ALTER TABLE orders
             ADD COLUMN IF NOT EXISTS tracking_number TEXT;
         """))
 
-        db.execute(text("""
+        conn.execute(text("""
             ALTER TABLE payments
             ADD COLUMN IF NOT EXISTS status TEXT;
         """))
-        db.execute(text("""
+        conn.execute(text("""
             ALTER TABLE payments
             ADD COLUMN IF NOT EXISTS proof_url TEXT;
         """))
 
-        db.commit()
         logger.info("✅ orders & payments columns verified")
-    except Exception as e:
-        logger.error(f"❌ orders/payments migration failed: {e}")
-    finally:
-        db.close()
 
-def migrate_address_link():
-    db = SessionLocal()
-    try:
-        db.execute(text("""
-            ALTER TABLE orders
-            ADD COLUMN IF NOT EXISTS address_id UUID;
-        """))
-
-        db.execute(text("""
+def migrate_orders_address_id():
+    with engine.begin() as conn:
+        # Drop FK if exists
+        conn.execute(text("""
             DO $$
             BEGIN
                 IF EXISTS (
-                    SELECT 1
-                    FROM information_schema.table_constraints
+                    SELECT 1 FROM information_schema.table_constraints
                     WHERE constraint_name = 'orders_address_id_fkey'
                 ) THEN
                     ALTER TABLE orders DROP CONSTRAINT orders_address_id_fkey;
@@ -162,7 +166,14 @@ def migrate_address_link():
             END$$;
         """))
 
-        db.execute(text("""
+        # Convert column type safely
+        conn.execute(text("""
+            ALTER TABLE orders
+            ALTER COLUMN address_id TYPE UUID
+            USING address_id::uuid;
+        """))
+
+        conn.execute(text("""
             ALTER TABLE orders
             ADD CONSTRAINT orders_address_id_fkey
             FOREIGN KEY (address_id)
@@ -170,37 +181,24 @@ def migrate_address_link():
             ON DELETE SET NULL;
         """))
 
-        db.commit()
         logger.info("✅ orders.address_id UUID FK verified")
-    except Exception as e:
-        logger.error(f"❌ address_id migration failed: {e}")
-    finally:
-        db.close()
 
 def migrate_products_inventory():
-    db = SessionLocal()
-    try:
-        db.execute(text("""
+    with engine.begin() as conn:
+        conn.execute(text("""
             ALTER TABLE products
             ADD COLUMN IF NOT EXISTS stock INTEGER NOT NULL DEFAULT 0;
         """))
-        db.execute(text("""
+        conn.execute(text("""
             ALTER TABLE products
             ADD COLUMN IF NOT EXISTS in_stock BOOLEAN NOT NULL DEFAULT FALSE;
         """))
-
-        db.execute(text("""
+        conn.execute(text("""
             UPDATE products
-            SET in_stock = (stock > 0)
-            WHERE in_stock = FALSE;
+            SET in_stock = (stock > 0);
         """))
 
-        db.commit()
-        logger.info("✅ products stock & in_stock columns verified")
-    except Exception as e:
-        logger.error(f"❌ products inventory migration failed: {e}")
-    finally:
-        db.close()
+        logger.info("✅ products inventory verified")
 
 # =========================
 # STARTUP
@@ -208,8 +206,9 @@ def migrate_products_inventory():
 @app.on_event("startup")
 def startup_event():
     Base.metadata.create_all(bind=engine)
+    migrate_users()
     migrate_orders_and_payments()
-    migrate_address_link()
+    migrate_orders_address_id()
     migrate_products_inventory()
     seed_admin()
 
