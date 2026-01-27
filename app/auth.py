@@ -6,12 +6,9 @@ from app.database import get_db
 from app.models import User
 from app.security import verify_password, hash_password, create_token
 
-router = APIRouter(prefix="/api/auth", tags=["Auth"])
+router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-# =========================
-# SCHEMAS
-# =========================
 class LoginPayload(BaseModel):
     email: EmailStr
     password: str
@@ -24,67 +21,36 @@ class RegisterPayload(BaseModel):
     phone: str | None = None
 
 
-# =========================
-# LOGIN
-# =========================
 @router.post("/login")
-def login(
-    payload: LoginPayload,
-    response: Response,
-    db: Session = Depends(get_db),
-):
+def login(payload: LoginPayload, response: Response, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
 
     if not user or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
-        )
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account disabled",
-        )
+        raise HTTPException(status_code=403, detail="User disabled")
 
-    # 🔐 CREATE TOKEN SAFELY
-    try:
-        token = create_token(user.id, user.role)
-    except Exception as e:
-        # This prevents silent 500s that break CORS
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Authentication service misconfigured",
-        )
+    token = create_token(user.id, user.role)
 
-    # 🔐 Set JWT as httpOnly cookie
+    # ✅ Set cookie AFTER successful token creation
     response.set_cookie(
         key="access_token",
         value=token,
         httponly=True,
         secure=True,
-        samesite="none",  # ✅ REQUIRED for cross-site cookies (Vercel → Render)
+        samesite="none",
         path="/",
         max_age=60 * 60 * 24 * 7,
     )
 
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "role": user.role,
-    }
+    return {"role": user.role}
 
 
-# =========================
-# REGISTER
-# =========================
-@router.post("/register", status_code=status.HTTP_201_CREATED)
+@router.post("/register", status_code=201)
 def register(payload: RegisterPayload, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == payload.email).first():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered",
-        )
+        raise HTTPException(status_code=400, detail="Email already registered")
 
     user = User(
         email=payload.email,
@@ -97,6 +63,5 @@ def register(payload: RegisterPayload, db: Session = Depends(get_db)):
 
     db.add(user)
     db.commit()
-    db.refresh(user)
 
-    return {"message": "Account created successfully"}
+    return {"message": "Account created"}
