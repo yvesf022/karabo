@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 
 from app.database import get_db
 from app.models import User
-from app.security import verify_password, hash_password, create_token
+from app.security import verify_password, hash_password, create_token, decode_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -77,3 +77,34 @@ def register(payload: RegisterPayload, db: Session = Depends(get_db)):
         )
 
     return {"message": "Account created"}
+
+
+@router.get("/me")
+def get_me(request: Request, db: Session = Depends(get_db)):
+    token = request.cookies.get("access_token")
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    payload = decode_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        )
+
+    user = db.query(User).filter(User.id == payload["sub"]).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+        )
+
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "role": user.role,
+    }
