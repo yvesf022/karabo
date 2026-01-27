@@ -9,7 +9,7 @@ from app.routes.admin import router as admin_router
 
 app = FastAPI(title="Karabo API")
 
-# 🔐 CORS — THIS IS THE FIX
+# 🔐 CORS — DO NOT TOUCH
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -22,7 +22,7 @@ app.add_middleware(
 )
 
 # Routes
-app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
+app.include_router(auth_router)                     # 🔥 FIXED
 app.include_router(products_router, prefix="/api/products", tags=["Products"])
 app.include_router(orders_router, prefix="/api/orders", tags=["Orders"])
 app.include_router(users_router, prefix="/api/users", tags=["Users"])
