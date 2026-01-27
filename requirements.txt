@@ -1,9 +1,25 @@
-fastapi
-uvicorn[standard]
-sqlalchemy>=2.0
-psycopg2-binary
-python-multipart
-python-jose[cryptography]
-passlib[bcrypt]
-pydantic
-python-dotenv
+fastapi==0.128.0
+uvicorn==0.40.0
+
+# Database
+sqlalchemy==2.0.46
+psycopg2-binary==2.9.11
+
+# Auth & Security
+python-jose==3.5.0
+passlib[bcrypt]==1.7.4
+bcrypt==5.0.0
+
+# Forms & Uploads
+python-multipart==0.0.22
+
+# Config & Env
+python-dotenv==1.2.1
+
+# Pydantic (FastAPI v2 compatible)
+pydantic==2.12.5
+pydantic-core==2.41.5
+
+# Async / Server (Render compatible)
+anyio==4.12.1
+starlette==0.50.0
