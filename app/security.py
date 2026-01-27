@@ -13,12 +13,25 @@ ACCESS_TOKEN_EXPIRE_DAYS = 7
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# bcrypt hard limit: 72 BYTES (not characters)
+BCRYPT_MAX_BYTES = 72
+
+
+def _validate_password_length(password: str) -> None:
+    if len(password.encode("utf-8")) > BCRYPT_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password is too long (maximum 72 bytes allowed).",
+        )
+
 
 def hash_password(password: str) -> str:
+    _validate_password_length(password)
     return pwd_context.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    _validate_password_length(plain_password)
     return pwd_context.verify(plain_password, hashed_password)
 
 
