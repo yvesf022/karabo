@@ -47,7 +47,15 @@ def login(
             detail="User account disabled",
         )
 
-    token = create_token(user.id, user.role)
+    # 🔐 CREATE TOKEN SAFELY
+    try:
+        token = create_token(user.id, user.role)
+    except Exception as e:
+        # This prevents silent 500s that break CORS
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service misconfigured",
+        )
 
     # 🔐 Set JWT as httpOnly cookie
     response.set_cookie(
@@ -55,13 +63,13 @@ def login(
         value=token,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",  # ✅ REQUIRED for cross-site cookies (Vercel → Render)
         path="/",
-        max_age=60 * 60 * 24 * 7,  # 7 days
+        max_age=60 * 60 * 24 * 7,
     )
 
     return {
-        "access_token": token,   # kept for backward compatibility
+        "access_token": token,
         "token_type": "bearer",
         "role": user.role,
     }
