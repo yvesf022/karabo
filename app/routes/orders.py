@@ -31,7 +31,7 @@ def create_order(
 ):
     items = payload.get("items")
     total_amount = payload.get("total_amount")
-    address_id = payload.get("address_id")  # Retrieve address_id
+    address_id = payload.get("address_id")
 
     if not items or not total_amount:
         raise HTTPException(
@@ -39,7 +39,6 @@ def create_order(
             detail="Missing order data",
         )
 
-    # Ensure address_id exists and is valid
     if not address_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -78,7 +77,7 @@ def create_order(
         total_amount=total_amount,
         payment_status=PaymentStatus.on_hold,
         shipping_status=ShippingStatus.created,
-        address_id=address_id,  # Store address_id with the order
+        address_id=address_id,
     )
 
     db.add(order)
@@ -192,6 +191,29 @@ def my_orders(
 
 
 # =====================================================
+# ADMIN: LIST ALL ORDERS
+# =====================================================
+@router.get("/admin")
+def admin_list_orders(
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    orders = db.query(Order).order_by(Order.created_at.desc()).all()
+
+    return [
+        {
+            "id": o.id,
+            "user_email": o.user.email if o.user else None,
+            "total_amount": o.total_amount,
+            "payment_status": o.payment_status.value,
+            "shipping_status": o.shipping_status.value,
+            "created_at": o.created_at,
+        }
+        for o in orders
+    ]
+
+
+# =====================================================
 # ADMIN: UPDATE ORDER (STRICT FLOW)
 # =====================================================
 @router.post("/admin/{order_id}/update")
@@ -232,7 +254,6 @@ def admin_update_order(
                 "Admin can only approve or reject payment",
             )
 
-        # 🔥 STOCK ROLLBACK ON REJECTION
         if new_status == PaymentStatus.rejected:
             for item in order.items:
                 product_id = item.get("product_id")
