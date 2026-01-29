@@ -43,7 +43,13 @@ def login(payload: LoginPayload, response: Response, db: Session = Depends(get_d
         max_age=60 * 60 * 24 * 7,
     )
 
-    return {"role": user.role}
+    # 🔑 IMPORTANT: return identity hint (not token)
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role,
+    }
 
 
 @router.post("/register", status_code=201)
@@ -51,30 +57,18 @@ def register(payload: RegisterPayload, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == payload.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    try:
-        user = User(
-            email=payload.email,
-            password_hash=hash_password(payload.password),
-            full_name=payload.full_name,
-            phone=payload.phone,
-            role="user",
-            is_active=True,
-        )
+    user = User(
+        email=payload.email,
+        password_hash=hash_password(payload.password),
+        full_name=payload.full_name,
+        phone=payload.phone,
+        role="user",
+        is_active=True,
+    )
 
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-
-    except HTTPException:
-        db.rollback()
-        raise
-
-    except Exception:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to create user",
-        )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
 
     return {"message": "Account created"}
 
@@ -84,27 +78,20 @@ def get_me(request: Request, db: Session = Depends(get_db)):
     token = request.cookies.get("access_token")
 
     if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     payload = decode_token(token)
     if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     user = db.query(User).filter(User.id == payload["sub"]).first()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
+    # ✅ AMAZON-LEVEL IDENTITY
     return {
         "id": str(user.id),
         "email": user.email,
+        "full_name": user.full_name,
         "role": user.role,
     }
