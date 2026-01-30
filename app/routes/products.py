@@ -1,10 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import func
 
 from app.database import get_db
 from app.models import Product, ProductStatus
-from app.dependencies import require_admin
 from typing import Optional
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -15,10 +14,13 @@ router = APIRouter(prefix="/products", tags=["products"])
 @router.get("")
 def list_products(
     db: Session = Depends(get_db),
+    search_query: Optional[str] = None,  # New search query parameter
     category: Optional[str] = None,
     min_price: Optional[int] = None,
     max_price: Optional[int] = None,
     in_stock: Optional[bool] = None,
+    brand: Optional[str] = None,
+    ratings: Optional[int] = None,
     sort: Optional[str] = "featured",
     page: Optional[int] = 1,
     per_page: Optional[int] = 20,
@@ -27,6 +29,11 @@ def list_products(
     query = db.query(Product).filter(Product.status == ProductStatus.active)
 
     # Apply filters
+    if search_query:
+        query = query.filter(
+            func.to_tsvector(Product.title).match(search_query) |
+            func.to_tsvector(Product.short_description).match(search_query)
+        )
     if category:
         query = query.filter(Product.category == category)
     if min_price:
@@ -35,6 +42,10 @@ def list_products(
         query = query.filter(Product.price <= max_price)
     if in_stock is not None:
         query = query.filter(Product.in_stock == in_stock)
+    if brand:
+        query = query.filter(Product.brand == brand)  # New filter by brand
+    if ratings:
+        query = query.filter(Product.rating >= ratings)  # New filter by minimum rating
 
     # Sorting logic
     if sort == "price_low":
@@ -43,7 +54,10 @@ def list_products(
         query = query.order_by(Product.price.desc())
     elif sort == "rating":
         query = query.order_by(Product.rating.desc())
-    # Add more sorting options as needed
+    elif sort == "new_arrivals":
+        query = query.order_by(Product.created_at.desc())  # New sorting by newest products
+    elif sort == "best_sellers":
+        query = query.order_by(Product.sales.desc())  # Sort by best-selling products
 
     # Pagination logic
     skip = (page - 1) * per_page
@@ -58,6 +72,7 @@ def list_products(
             "compare_price": p.compare_price,
             "main_image": p.main_image,
             "category": p.category,
+            "brand": p.brand,  # Return brand information
             "in_stock": p.in_stock,
         }
         for p in products
