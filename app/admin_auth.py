@@ -36,8 +36,8 @@ def admin_login(
         httponly=True,
         secure=True,
         samesite="none",
-        path="/admin",
-        max_age=60 * 60 * 8,  # 8 hours
+        path="/",                     # ✅ FIXED
+        max_age=60 * 60 * 8,          # 8 hours
     )
 
     return {
@@ -51,7 +51,7 @@ def admin_login(
 def admin_logout(response: Response):
     response.delete_cookie(
         key="admin_access_token",
-        path="/admin",
+        path="/",                     # ✅ FIXED
     )
     return {"message": "Admin logged out"}
 
