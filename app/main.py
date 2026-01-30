@@ -67,7 +67,6 @@ def ensure_admin_user():
     finally:
         db.close()
 
-
 ensure_admin_user()
 
 # =========================
