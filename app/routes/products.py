@@ -1,23 +1,52 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from app.database import get_db
 from app.models import Product, ProductStatus
 from app.dependencies import require_admin
+from typing import Optional
 
 router = APIRouter(prefix="/products", tags=["products"])
 
-
 # =============================
-# PUBLIC: LIST PRODUCTS
+# PUBLIC: LIST PRODUCTS WITH FILTERING, SORTING, AND PAGINATION
 # =============================
 @router.get("")
-def list_products(db: Session = Depends(get_db)):
-    products = (
-        db.query(Product)
-        .filter(Product.status == ProductStatus.active)
-        .all()
-    )
+def list_products(
+    db: Session = Depends(get_db),
+    category: Optional[str] = None,
+    min_price: Optional[int] = None,
+    max_price: Optional[int] = None,
+    in_stock: Optional[bool] = None,
+    sort: Optional[str] = "featured",
+    page: Optional[int] = 1,
+    per_page: Optional[int] = 20,
+):
+    # Build the query
+    query = db.query(Product).filter(Product.status == ProductStatus.active)
+    
+    if category:
+        query = query.filter(Product.category == category)
+    if min_price:
+        query = query.filter(Product.price >= min_price)
+    if max_price:
+        query = query.filter(Product.price <= max_price)
+    if in_stock is not None:
+        query = query.filter(Product.in_stock == in_stock)
+
+    # Sorting logic
+    if sort == "price_low":
+        query = query.order_by(Product.price)
+    elif sort == "price_high":
+        query = query.order_by(Product.price.desc())
+    elif sort == "rating":
+        query = query.order_by(Product.rating.desc())
+    # Add more sorting options as needed
+
+    # Pagination
+    skip = (page - 1) * per_page
+    products = query.offset(skip).limit(per_page).all()
 
     return [
         {
@@ -32,123 +61,3 @@ def list_products(db: Session = Depends(get_db)):
         }
         for p in products
     ]
-
-
-# =============================
-# PUBLIC: PRODUCT DETAIL
-# =============================
-@router.get("/{product_id}")
-def product_detail(product_id: str, db: Session = Depends(get_db)):
-    product = db.query(Product).filter(Product.id == product_id).first()
-
-    if not product or product.status != ProductStatus.active:
-        raise HTTPException(404, "Product not found")
-
-    return {
-        "id": product.id,
-        "title": product.title,
-        "short_description": product.short_description,
-        "description": product.description,
-        "price": product.price,
-        "compare_price": product.compare_price,
-        "sku": product.sku,
-        "main_image": product.main_image,
-        "images": product.images,
-        "category": product.category,
-        "specs": product.specs,
-        "stock": product.stock,
-        "in_stock": product.in_stock,
-    }
-
-
-# =============================
-# ADMIN: CREATE PRODUCT
-# =============================
-@router.post("")
-def create_product(
-    payload: dict,
-    db: Session = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    required = ["title", "sku", "price", "category", "main_image"]
-    for field in required:
-        if field not in payload:
-            raise HTTPException(400, f"Missing field: {field}")
-
-    product = Product(
-        title=payload["title"],
-        short_description=payload.get("short_description"),
-        description=payload.get("description"),
-        sku=payload["sku"],
-        price=payload["price"],
-        compare_price=payload.get("compare_price"),
-        main_image=payload["main_image"],
-        images=payload.get("images", []),
-        category=payload["category"],
-        specs=payload.get("specs", {}),
-        stock=payload.get("stock", 0),
-        in_stock=payload.get("stock", 0) > 0,
-        status=payload.get("status", ProductStatus.active),
-    )
-
-    db.add(product)
-    db.commit()
-    db.refresh(product)
-
-    return {"id": product.id}
-
-
-# =============================
-# ADMIN: UPDATE PRODUCT
-# =============================
-@router.put("/{product_id}")
-def update_product(
-    product_id: str,
-    payload: dict,
-    db: Session = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    product = db.query(Product).filter(Product.id == product_id).first()
-    if not product:
-        raise HTTPException(404, "Product not found")
-
-    for field in [
-        "title",
-        "short_description",
-        "description",
-        "sku",
-        "price",
-        "compare_price",
-        "main_image",
-        "images",
-        "category",
-        "specs",
-        "status",
-        "stock",
-    ]:
-        if field in payload:
-            setattr(product, field, payload[field])
-
-    if "stock" in payload:
-        product.in_stock = product.stock > 0
-
-    db.commit()
-    return {"message": "Product updated"}
-
-
-# =============================
-# ADMIN: DELETE PRODUCT
-# =============================
-@router.delete("/{product_id}")
-def delete_product(
-    product_id: str,
-    db: Session = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    product = db.query(Product).filter(Product.id == product_id).first()
-    if not product:
-        raise HTTPException(404, "Product not found")
-
-    db.delete(product)
-    db.commit()
-    return {"message": "Product deleted"}
