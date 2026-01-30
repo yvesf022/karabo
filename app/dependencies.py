@@ -88,3 +88,10 @@ def require_admin_session(
         )
 
     return admin
+
+
+# =========================
+# 🔒 BACKWARD-COMPAT ALIAS
+# =========================
+# Used by existing routes: products.py, admin.py, etc.
+require_admin = require_admin_session
