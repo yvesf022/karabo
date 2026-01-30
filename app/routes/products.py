@@ -25,7 +25,8 @@ def list_products(
 ):
     # Build the query
     query = db.query(Product).filter(Product.status == ProductStatus.active)
-    
+
+    # Apply filters
     if category:
         query = query.filter(Product.category == category)
     if min_price:
@@ -44,7 +45,7 @@ def list_products(
         query = query.order_by(Product.rating.desc())
     # Add more sorting options as needed
 
-    # Pagination
+    # Pagination logic
     skip = (page - 1) * per_page
     products = query.offset(skip).limit(per_page).all()
 
