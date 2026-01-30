@@ -12,7 +12,6 @@ from sqlalchemy import (
     ForeignKey,
     Enum as SqlEnum,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -20,15 +19,27 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 
 
-# =========================
+# =====================================================
 # ENUMS
-# =========================
+# =====================================================
+
+class UserRole(str, Enum):
+    user = "user"
+    admin = "admin"
+
+
+class ProductStatus(str, Enum):
+    draft = "draft"
+    active = "active"
+    archived = "archived"
+
 
 class PaymentStatus(str, Enum):
-    on_hold = "on_hold"
-    payment_submitted = "payment_submitted"
-    payment_received = "payment_received"
+    initiated = "initiated"
+    proof_submitted = "proof_submitted"
+    approved = "approved"
     rejected = "rejected"
+    refunded = "refunded"
 
 
 class ShippingStatus(str, Enum):
@@ -38,15 +49,13 @@ class ShippingStatus(str, Enum):
     delivered = "delivered"
 
 
-class SupportStatus(str, Enum):
-    open = "open"
-    in_progress = "in_progress"
-    resolved = "resolved"
+class PaymentMethod(str, Enum):
+    bank_transfer = "bank_transfer"
 
 
-# =========================
+# =====================================================
 # USER
-# =========================
+# =====================================================
 
 class User(Base):
     __tablename__ = "users"
@@ -59,164 +68,97 @@ class User(Base):
     phone = Column(String)
     avatar_url = Column(String)
 
-    role = Column(String, default="user")
+    role = Column(SqlEnum(UserRole), default=UserRole.user)
     is_active = Column(Boolean, default=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     orders = relationship("Order", back_populates="user", cascade="all, delete-orphan")
-    addresses = relationship("Address", back_populates="user", cascade="all, delete-orphan")
-    support_tickets = relationship("SupportTicket", back_populates="user", cascade="all, delete-orphan")
-    wishlist_items = relationship("WishlistItem", back_populates="user", cascade="all, delete-orphan")
 
 
-# =========================
-# ADDRESS
-# =========================
-
-class Address(Base):
-    __tablename__ = "addresses"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-
-    full_name = Column(String, nullable=False)
-    phone = Column(String, nullable=False)
-
-    address_line_1 = Column(String, nullable=False)
-    address_line_2 = Column(String)
-    city = Column(String, nullable=False)
-    state = Column(String, nullable=False)
-    postal_code = Column(String, nullable=False)
-    country = Column(String, nullable=False)
-
-    is_default = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    user = relationship("User", back_populates="addresses")
-    orders = relationship("Order", back_populates="address")
-
-
-# =========================
-# PRODUCT
-# =========================
+# =====================================================
+# PRODUCT (AMAZON-LEVEL)
+# =====================================================
 
 class Product(Base):
     __tablename__ = "products"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    title = Column(String, nullable=False)
-    price = Column(Float, nullable=False)
-    img = Column(String, nullable=False)
-    category = Column(String, nullable=False)
-    rating = Column(Float, default=0)
 
+    # Core
+    title = Column(String, nullable=False)
+    short_description = Column(String)
+    description = Column(Text)
+
+    # Commerce
+    sku = Column(String, unique=True, index=True, nullable=False)
+    price = Column(Float, nullable=False)
+    compare_price = Column(Float)
+
+    # Media
+    main_image = Column(String, nullable=False)
+    images = Column(JSONB, default=list)
+
+    # Classification
+    category = Column(String, nullable=False)
+    specs = Column(JSONB, default=dict)
+
+    # Inventory
     stock = Column(Integer, default=0)
     in_stock = Column(Boolean, default=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    wishlist_users = relationship("WishlistItem", back_populates="product", cascade="all, delete-orphan")
-
-
-# =========================
-# WISHLIST
-# =========================
-
-class WishlistItem(Base):
-    __tablename__ = "wishlist_items"
-    __table_args__ = (
-        UniqueConstraint("user_id", "product_id", name="uix_user_product"),
-    )
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    # Status
+    status = Column(SqlEnum(ProductStatus), default=ProductStatus.active)
 
     created_at = Column(DateTime, default=datetime.utcnow)
-
-    user = relationship("User", back_populates="wishlist_items")
-    product = relationship("Product", back_populates="wishlist_users")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
-# =========================
+# =====================================================
 # ORDER
-# =========================
+# =====================================================
 
 class Order(Base):
     __tablename__ = "orders"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    address_id = Column(UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL"))
 
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Snapshot of purchased products
     items = Column(JSONB, nullable=False)
+
     total_amount = Column(Float, nullable=False)
 
-    payment_status = Column(SqlEnum(PaymentStatus), default=PaymentStatus.on_hold, nullable=False)
-    shipping_status = Column(SqlEnum(ShippingStatus), default=ShippingStatus.created, nullable=False)
-
+    shipping_status = Column(SqlEnum(ShippingStatus), default=ShippingStatus.created)
     tracking_number = Column(String)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="orders")
-    address = relationship("Address", back_populates="orders")
-    payment = relationship("Payment", uselist=False, back_populates="order", cascade="all, delete-orphan")
+    payment = relationship("Payment", back_populates="order", uselist=False, cascade="all, delete-orphan")
 
 
-# =========================
-# PAYMENT
-# =========================
+# =====================================================
+# PAYMENT (FIRST-CLASS DOMAIN)
+# =====================================================
 
 class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), unique=True, nullable=False)
+
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), unique=True)
+
+    method = Column(SqlEnum(PaymentMethod), nullable=False)
+    amount = Column(Float, nullable=False)
 
     proof_url = Column(String)
-    status = Column(SqlEnum(PaymentStatus), default=PaymentStatus.on_hold, nullable=False)
+    status = Column(SqlEnum(PaymentStatus), default=PaymentStatus.initiated)
+
+    reviewed_by_admin = Column(Boolean, default=False)
+    reviewed_at = Column(DateTime)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
     order = relationship("Order", back_populates="payment")
-
-
-# =========================
-# SUPPORT
-# =========================
-
-class SupportTicket(Base):
-    __tablename__ = "support_tickets"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-
-    subject = Column(String, nullable=False)
-    message = Column(Text, nullable=False)
-    status = Column(SqlEnum(SupportStatus), default=SupportStatus.open, nullable=False)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    user = relationship("User", back_populates="support_tickets")
-
-
-# =========================
-# PAYMENT SETTINGS
-# =========================
-
-class PaymentSetting(Base):
-    __tablename__ = "payment_settings"
-
-    id = Column(Integer, primary_key=True, index=True)
-    bank_name = Column(String, nullable=False)
-    account_name = Column(String, nullable=False)
-    account_number = Column(String, nullable=False)
-    is_active = Column(Boolean, default=True)
-
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

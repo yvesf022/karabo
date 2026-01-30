@@ -11,7 +11,7 @@ from app.security import hash_password
 
 from app.auth import router as auth_router
 from app.admin_auth import router as admin_auth_router
-from app.routes import products, orders, users, admin
+from app.routes import products, orders, users, admin, payments
 
 # =========================
 # APP
@@ -78,9 +78,9 @@ app.include_router(admin_auth_router)
 
 app.include_router(products.router, prefix="/api", tags=["products"])
 app.include_router(orders.router, prefix="/api/orders", tags=["orders"])
+app.include_router(payments.router, prefix="/api/payments", tags=["payments"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
-
 
 # =========================
 # HEALTH CHECK
