@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+
+# Virtual env
+.venv/
+venv/
+
+# Uploads
+uploads/
+
+# Scripts with secrets
+create_admin.py
