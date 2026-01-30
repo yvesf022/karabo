@@ -10,7 +10,7 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_admin
+from app.dependencies import require_admin_session
 from app.models import User, PaymentSetting
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -33,7 +33,7 @@ ALLOWED_IMAGE_TYPES = {
 # ADMIN: VERIFY ACCESS
 # ---------------------------------
 @router.get("/me")
-def admin_me(admin: User = Depends(require_admin)):
+def admin_me(admin: User = Depends(require_admin_session)):
     return {
         "id": admin.id,
         "email": admin.email,
@@ -48,7 +48,7 @@ def admin_me(admin: User = Depends(require_admin)):
 @router.get("/payment-settings")
 def get_payment_settings(
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_admin_session),
 ):
     settings = db.query(PaymentSetting).all()
     return [
@@ -70,7 +70,7 @@ def get_payment_settings(
 def upsert_payment_setting(
     payload: dict,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_admin_session),
 ):
     bank_name = payload.get("bank_name")
     account_name = payload.get("account_name")
@@ -110,7 +110,7 @@ def upsert_payment_setting(
 @router.post("/products/upload-image")
 def upload_product_image(
     image: UploadFile = File(...),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_admin_session),
 ):
     if image.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(

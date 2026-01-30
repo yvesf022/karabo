@@ -7,7 +7,7 @@ from app.security import decode_token
 
 
 # =========================
-# CURRENT USER (COOKIE AUTH)
+# CURRENT USER (USER COOKIE)
 # =========================
 def get_current_user(
     request: Request,
@@ -52,12 +52,39 @@ def get_current_user(
 
 
 # =========================
-# ADMIN ONLY
+# ADMIN SESSION (ADMIN COOKIE)
 # =========================
-def require_admin(user: User = Depends(get_current_user)):
-    if user.role != "admin":
+def require_admin_session(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    token = request.cookies.get("admin_access_token")
+
+    if not token:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Admin not authenticated",
         )
-    return user
+
+    payload = decode_token(token)
+    if not payload or payload.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid admin token",
+        )
+
+    admin_id = payload.get("sub")
+    if not admin_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid admin token payload",
+        )
+
+    admin = db.query(User).filter(User.id == admin_id).first()
+    if not admin or admin.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Admin not found",
+        )
+
+    return admin

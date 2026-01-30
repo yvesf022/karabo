@@ -8,6 +8,7 @@ from app.database import engine
 from app.models import Base
 
 from app.auth import router as auth_router
+from app.admin_auth import router as admin_auth_router
 from app.routes import products, orders, users, admin
 
 app = FastAPI(title="Karabo API")
@@ -35,6 +36,7 @@ Base.metadata.create_all(bind=engine)
 # ROUTES
 # =========================
 app.include_router(auth_router)
+app.include_router(admin_auth_router)
 app.include_router(products.router, prefix="/api", tags=["products"])
 app.include_router(orders.router, prefix="/api/orders", tags=["orders"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
