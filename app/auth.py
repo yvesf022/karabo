@@ -197,7 +197,7 @@ def verify_email(
 
 
 # =====================================================
-# LOGIN  ✅ EMAIL VERIFICATION REMOVED
+# LOGIN
 # =====================================================
 
 @router.post("/login")
@@ -219,8 +219,6 @@ def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User disabled",
         )
-
-    # ❌ NO email verification check here anymore
 
     token = create_token(user.id, user.role)
 
@@ -258,10 +256,15 @@ def get_me(user: User = Depends(get_current_user)):
 
 
 # =====================================================
-# LOGOUT
+# LOGOUT  ✅ FIXED
 # =====================================================
 
 @router.post("/logout")
 def logout(response: Response):
-    response.delete_cookie(key="access_token", path="/")
+    response.delete_cookie(
+        key="access_token",
+        path="/",
+        secure=COOKIE_SECURE,
+        samesite="none" if COOKIE_SECURE else "lax",
+    )
     return {"message": "Logged out"}
