@@ -1,4 +1,5 @@
 import uuid
+import enum
 from sqlalchemy import (
     Column,
     String,
@@ -8,11 +9,30 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     JSON,
+    Enum,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
 from app.database import Base
+
+
+# =====================================================
+# ENUMS (REQUIRED BY ROUTES)
+# =====================================================
+class OrderStatus(str, enum.Enum):
+    pending = "pending"
+    paid = "paid"
+    cancelled = "cancelled"
+    shipped = "shipped"
+    completed = "completed"
+
+
+class PaymentStatus(str, enum.Enum):
+    pending = "pending"
+    on_hold = "on_hold"
+    paid = "paid"
+    rejected = "rejected"
 
 
 # =====================================================
@@ -47,39 +67,31 @@ class Product(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    # Core
     title = Column(String, nullable=False)
 
-    # 🔥 REQUIRED BY SEARCH + LIST QUERIES
+    # Required by search & list queries
     short_description = Column(Text, nullable=True)
-
     description = Column(Text, nullable=True)
 
     sku = Column(String, nullable=True)
     brand = Column(String, nullable=True)
 
-    # Pricing
     price = Column(Float, nullable=False)
     compare_price = Column(Float, nullable=True)
 
-    # Merchandising
     rating = Column(Float, nullable=True)
     sales = Column(Integer, default=0)
 
-    # Images
     main_image = Column(String, nullable=True)
     images = Column(JSON, nullable=True)
 
-    # Categorization
     category = Column(String, index=True, nullable=True)
     specs = Column(JSON, nullable=True)
 
-    # Inventory
     stock = Column(Integer, default=0)
     in_stock = Column(Boolean, default=True)
 
-    # Lifecycle
-    status = Column(String, default="active")  # active | draft | archived
+    status = Column(String, default="active")
 
     created_at = Column(
         DateTime(timezone=True),
@@ -95,7 +107,7 @@ class Product(Base):
 
 
 # =====================================================
-# ORDER (BASIC – SAFE)
+# ORDER
 # =====================================================
 class Order(Base):
     __tablename__ = "orders"
@@ -106,8 +118,11 @@ class Order(Base):
 
     total_amount = Column(Float, nullable=False)
 
-    payment_status = Column(String, default="pending")
-    shipping_status = Column(String, default="pending")
+    status = Column(
+        Enum(OrderStatus, name="order_status"),
+        default=OrderStatus.pending,
+        nullable=False,
+    )
 
     created_at = Column(
         DateTime(timezone=True),
@@ -117,7 +132,7 @@ class Order(Base):
 
 
 # =====================================================
-# PAYMENT (BASIC – SAFE)
+# PAYMENT
 # =====================================================
 class Payment(Base):
     __tablename__ = "payments"
@@ -127,8 +142,14 @@ class Payment(Base):
     order_id = Column(UUID(as_uuid=True), nullable=False)
 
     amount = Column(Float, nullable=False)
+
+    status = Column(
+        Enum(PaymentStatus, name="payment_status"),
+        default=PaymentStatus.pending,
+        nullable=False,
+    )
+
     method = Column(String, nullable=True)
-    status = Column(String, default="pending")
 
     created_at = Column(
         DateTime(timezone=True),
