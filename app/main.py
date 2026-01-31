@@ -1,34 +1,23 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-import os
 
-from sqlalchemy import text
-
-# 🔴 FORCE MODEL REGISTRATION
-import app.models  # noqa: F401
-
-from app.database import engine, SessionLocal
-from app.models import Base, User
-from app.security import hash_password
-
+from app.database import engine, Base
+from app.routes import users, products, orders, payments, admin
 from app.auth import router as auth_router
 from app.admin_auth import router as admin_auth_router
-from app.routes import products, orders, users, admin, payments
 
-# =========================
-# APP
-# =========================
 app = FastAPI(title="Karabo API")
 
 # =========================
-# CORS
+# CORS (COOKIE SAFE)
 # =========================
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",
         "https://kkkkkk-kappa.vercel.app",
+        "http://localhost:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -36,76 +25,35 @@ app.add_middleware(
 )
 
 # =========================
-# CREATE TABLES
+# STATIC FILES (UPLOADS)
 # =========================
-Base.metadata.create_all(bind=engine)
-
-# =====================================================
-# ONE-TIME DB PATCH
-# =====================================================
-try:
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                """
-                ALTER TABLE users
-                ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE
-                """
-            )
-        )
-except Exception as e:
-    print("ℹ️ DB patch skipped:", e)
-
-# =========================
-# ADMIN BOOTSTRAP
-# =========================
-def ensure_admin_user():
-    admin_email = os.getenv("ADMIN_EMAIL")
-    admin_password = os.getenv("ADMIN_PASSWORD")
-
-    if not admin_email or not admin_password:
-        print("⚠️ ADMIN_EMAIL / ADMIN_PASSWORD not set")
-        return
-
-    db = SessionLocal()
-    try:
-        admin = db.query(User).filter(User.email == admin_email).first()
-        if not admin:
-            admin = User(
-                email=admin_email,
-                password_hash=hash_password(admin_password),
-                role="admin",
-                is_active=True,
-                is_verified=True,
-            )
-            db.add(admin)
-            db.commit()
-            print("✅ Admin created")
-    finally:
-        db.close()
-
-ensure_admin_user()
+# 🔥 REQUIRED FOR PRODUCT IMAGES
+app.mount(
+    "/uploads",
+    StaticFiles(directory="uploads"),
+    name="uploads",
+)
 
 # =========================
 # ROUTES
 # =========================
-app.include_router(auth_router)
-app.include_router(admin_auth_router)
 
-app.include_router(products.router, prefix="/api", tags=["products"])
-app.include_router(orders.router, prefix="/api/orders", tags=["orders"])
-app.include_router(payments.router, prefix="/api/payments", tags=["payments"])
-app.include_router(users.router, prefix="/api/users", tags=["users"])
-app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+# Auth
+app.include_router(auth_router)          # /api/auth/*
+app.include_router(admin_auth_router)    # /api/admin/auth/*
 
-# =========================
-# STATIC UPLOADS (🔥 FIX)
-# =========================
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+# Core API
+app.include_router(users.router, prefix="/api")
+app.include_router(products.router, prefix="/api")
+app.include_router(orders.router, prefix="/api")
+app.include_router(payments.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
 
 # =========================
-# HEALTH CHECK
+# 🔥 AUTO-FIX DATABASE (Render Free)
 # =========================
-@app.get("/")
-def root():
-    return {"status": "ok"}
+
+@app.on_event("startup")
+def on_startup():
+    # Creates missing tables & columns
+    Base.metadata.create_all(bind=engine)
