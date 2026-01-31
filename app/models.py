@@ -20,6 +20,7 @@ from app.database import Base
 # =====================================================
 # ENUMS (REQUIRED BY ROUTES)
 # =====================================================
+
 class OrderStatus(str, enum.Enum):
     pending = "pending"
     paid = "paid"
@@ -35,9 +36,18 @@ class PaymentStatus(str, enum.Enum):
     rejected = "rejected"
 
 
+class ShippingStatus(str, enum.Enum):
+    pending = "pending"
+    processing = "processing"
+    shipped = "shipped"
+    delivered = "delivered"
+    returned = "returned"
+
+
 # =====================================================
 # USER
 # =====================================================
+
 class User(Base):
     __tablename__ = "users"
 
@@ -62,14 +72,13 @@ class User(Base):
 # =====================================================
 # PRODUCT
 # =====================================================
+
 class Product(Base):
     __tablename__ = "products"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     title = Column(String, nullable=False)
-
-    # Required by search & list queries
     short_description = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
 
@@ -109,6 +118,7 @@ class Product(Base):
 # =====================================================
 # ORDER
 # =====================================================
+
 class Order(Base):
     __tablename__ = "orders"
 
@@ -124,6 +134,12 @@ class Order(Base):
         nullable=False,
     )
 
+    shipping_status = Column(
+        Enum(ShippingStatus, name="shipping_status"),
+        default=ShippingStatus.pending,
+        nullable=False,
+    )
+
     created_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -134,6 +150,7 @@ class Order(Base):
 # =====================================================
 # PAYMENT
 # =====================================================
+
 class Payment(Base):
     __tablename__ = "payments"
 
