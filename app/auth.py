@@ -1,4 +1,3 @@
-import os
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
@@ -6,13 +5,16 @@ from pydantic import BaseModel, EmailStr
 
 from app.database import get_db
 from app.models import User
-from app.security import verify_password, hash_password, create_token
+from app.security import (
+    verify_password,
+    hash_password,
+    create_token,
+    get_current_user,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 logger = logging.getLogger(__name__)
-
-COOKIE_SECURE = True  # 🔥 MUST be true for SameSite=None
 
 # =========================
 # SCHEMAS
@@ -31,6 +33,39 @@ class RegisterPayload(BaseModel):
 
 
 # =========================
+# REGISTER
+# =========================
+
+@router.post("/register")
+def register(payload: RegisterPayload, db: Session = Depends(get_db)):
+    existing = db.query(User).filter(User.email == payload.email).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+
+    user = User(
+        email=payload.email,
+        password_hash=hash_password(payload.password),
+        full_name=payload.full_name,
+        phone=payload.phone,
+        role="user",
+        is_active=True,
+    )
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "role": user.role,
+    }
+
+
+# =========================
 # LOGIN
 # =========================
 
@@ -39,10 +74,16 @@ def login(payload: LoginPayload, response: Response, db: Session = Depends(get_d
     user = db.query(User).filter(User.email == payload.email).first()
 
     if not user or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
 
     if not user.is_active:
-        raise HTTPException(status_code=403, detail="User disabled")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User disabled",
+        )
 
     token = create_token(user.id, user.role)
 
@@ -53,7 +94,7 @@ def login(payload: LoginPayload, response: Response, db: Session = Depends(get_d
         secure=True,
         samesite="none",
         path="/",
-        max_age=60 * 60 * 24 * 7,
+        max_age=60 * 60 * 24 * 7,  # 7 days
     )
 
     response.headers["Cache-Control"] = "no-store"
@@ -61,7 +102,26 @@ def login(payload: LoginPayload, response: Response, db: Session = Depends(get_d
     return {
         "id": str(user.id),
         "email": user.email,
+        "full_name": user.full_name,
+        "phone": user.phone,
         "role": user.role,
+    }
+
+
+# =========================
+# ME  🔥 REQUIRED BY FRONTEND
+# =========================
+
+@router.get("/me")
+def me(user: User = Depends(get_current_user)):
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "full_name": user.full_name,
+        "phone": user.phone,
+        "role": user.role,
+        "created_at": user.created_at,
+        "avatar_url": getattr(user, "avatar_url", None),
     }
 
 
