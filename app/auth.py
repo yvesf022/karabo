@@ -91,7 +91,6 @@ def send_verification_email(user: User):
             )
 
     except Exception as e:
-        # Absolute final guard — nothing escapes
         logger.warning(
             "Verification email exception swallowed | user_id=%s | error=%s",
             user.id,
@@ -128,11 +127,10 @@ def register(
     db.commit()
     db.refresh(user)
 
-    # 🔒 Email is intentionally non-blocking
     send_verification_email(user)
 
     return {
-        "message": "Account created. Please verify your email.",
+        "message": "Account created.",
     }
 
 
@@ -147,7 +145,6 @@ def resend_verification(
 ):
     user = db.query(User).filter(User.email == payload.email).first()
 
-    # Do not reveal whether email exists
     if not user or user.is_verified:
         return {
             "message": "If the account exists, a verification email has been sent."
@@ -200,7 +197,7 @@ def verify_email(
 
 
 # =====================================================
-# LOGIN
+# LOGIN  ✅ EMAIL VERIFICATION REMOVED
 # =====================================================
 
 @router.post("/login")
@@ -223,11 +220,7 @@ def login(
             detail="User disabled",
         )
 
-    if not user.is_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Please verify your email before logging in",
-        )
+    # ❌ NO email verification check here anymore
 
     token = create_token(user.id, user.role)
 
