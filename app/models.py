@@ -29,6 +29,14 @@ class OrderStatus(str, enum.Enum):
     completed = "completed"
 
 
+class ShippingStatus(str, enum.Enum):
+    pending = "pending"
+    processing = "processing"
+    shipped = "shipped"
+    delivered = "delivered"
+    returned = "returned"
+
+
 class PaymentStatus(str, enum.Enum):
     pending = "pending"
     on_hold = "on_hold"
@@ -36,12 +44,11 @@ class PaymentStatus(str, enum.Enum):
     rejected = "rejected"
 
 
-class ShippingStatus(str, enum.Enum):
-    pending = "pending"
-    processing = "processing"
-    shipped = "shipped"
-    delivered = "delivered"
-    returned = "returned"
+class PaymentMethod(str, enum.Enum):
+    card = "card"
+    cash = "cash"
+    mobile_money = "mobile_money"
+    bank_transfer = "bank_transfer"
 
 
 # =====================================================
@@ -166,7 +173,10 @@ class Payment(Base):
         nullable=False,
     )
 
-    method = Column(String, nullable=True)
+    method = Column(
+        Enum(PaymentMethod, name="payment_method"),
+        nullable=True,
+    )
 
     created_at = Column(
         DateTime(timezone=True),
