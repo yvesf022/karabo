@@ -63,15 +63,11 @@ def create_email_verification_token(user_id: str) -> str:
 
 
 def send_verification_email(user: User):
-    """
-    Non-critical side effect.
-    Email failure must NEVER affect user flows.
-    """
     try:
         token = create_email_verification_token(str(user.id))
         verify_url = f"{FRONTEND_URL}/verify-email?token={token}"
 
-        success = send_email(
+        send_email(
             to_email=user.email,
             subject="Verify your email address",
             html_content=f"""
@@ -82,17 +78,9 @@ def send_verification_email(user: User):
             """,
             text_content=f"Verify your email: {verify_url}",
         )
-
-        if not success:
-            logger.warning(
-                "Verification email failed to send | user_id=%s | email=%s",
-                user.id,
-                user.email,
-            )
-
     except Exception as e:
         logger.warning(
-            "Verification email exception swallowed | user_id=%s | error=%s",
+            "Verification email failed | user_id=%s | error=%s",
             user.id,
             str(e),
         )
@@ -103,10 +91,7 @@ def send_verification_email(user: User):
 # =====================================================
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-def register(
-    payload: RegisterPayload,
-    db: Session = Depends(get_db),
-):
+def register(payload: RegisterPayload, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == payload.email).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -129,71 +114,7 @@ def register(
 
     send_verification_email(user)
 
-    return {
-        "message": "Account created.",
-    }
-
-
-# =====================================================
-# RESEND VERIFICATION
-# =====================================================
-
-@router.post("/resend-verification")
-def resend_verification(
-    payload: ResendVerificationPayload,
-    db: Session = Depends(get_db),
-):
-    user = db.query(User).filter(User.email == payload.email).first()
-
-    if not user or user.is_verified:
-        return {
-            "message": "If the account exists, a verification email has been sent."
-        }
-
-    send_verification_email(user)
-
-    return {
-        "message": "If the account exists, a verification email has been sent."
-    }
-
-
-# =====================================================
-# VERIFY EMAIL
-# =====================================================
-
-@router.get("/verify-email")
-def verify_email(
-    token: str,
-    db: Session = Depends(get_db),
-):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired verification link",
-        )
-
-    if payload.get("type") != "email_verification":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid token type",
-        )
-
-    user = db.query(User).filter(User.id == payload["sub"]).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User not found",
-        )
-
-    if user.is_verified:
-        return {"message": "Email already verified"}
-
-    user.is_verified = True
-    db.commit()
-
-    return {"message": "Email verified successfully"}
+    return {"message": "Account created."}
 
 
 # =====================================================
@@ -201,11 +122,7 @@ def verify_email(
 # =====================================================
 
 @router.post("/login")
-def login(
-    payload: LoginPayload,
-    response: Response,
-    db: Session = Depends(get_db),
-):
+def login(payload: LoginPayload, response: Response, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
 
     if not user or not verify_password(payload.password, user.password_hash):
@@ -232,6 +149,8 @@ def login(
         max_age=60 * 60 * 24 * 7,
     )
 
+    response.headers["Cache-Control"] = "no-store"
+
     return {
         "id": str(user.id),
         "email": user.email,
@@ -256,7 +175,7 @@ def get_me(user: User = Depends(get_current_user)):
 
 
 # =====================================================
-# LOGOUT  ✅ FIXED
+# LOGOUT
 # =====================================================
 
 @router.post("/logout")
@@ -267,4 +186,5 @@ def logout(response: Response):
         secure=COOKIE_SECURE,
         samesite="none" if COOKIE_SECURE else "lax",
     )
+    response.headers["Cache-Control"] = "no-store"
     return {"message": "Logged out"}
