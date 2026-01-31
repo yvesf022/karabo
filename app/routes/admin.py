@@ -1,136 +1,108 @@
-import os
-import uuid
-from fastapi import (
-    APIRouter,
-    Depends,
-    HTTPException,
-    UploadFile,
-    File,
-)
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_admin_session
-from app.models import User, PaymentSetting
+from app.dependencies import require_admin
+from app.models import Product, ProductStatus, Order, OrderStatus, ShippingStatus
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-# ==============================
-# UPLOAD CONFIG
-# ==============================
-UPLOAD_DIR = "uploads/products"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-ALLOWED_IMAGE_TYPES = {
-    "image/png",
-    "image/jpeg",
-    "image/jpg",
-    "image/webp",
-}
+# =============================
+# ADMIN: DASHBOARD STATS
+# =============================
+@router.get("/dashboard")
+def admin_dashboard(
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    total_products = db.query(Product).count()
+    active_products = (
+        db.query(Product)
+        .filter(Product.status == ProductStatus.active)
+        .count()
+    )
+    total_orders = db.query(Order).count()
+    paid_orders = (
+        db.query(Order)
+        .filter(Order.order_status == OrderStatus.paid)
+        .count()
+    )
 
-
-# ---------------------------------
-# ADMIN: VERIFY ACCESS
-# ---------------------------------
-@router.get("/me")
-def admin_me(admin: User = Depends(require_admin_session)):
     return {
-        "id": admin.id,
-        "email": admin.email,
-        "role": admin.role,
-        "message": "Admin access confirmed",
+        "total_products": total_products,
+        "active_products": active_products,
+        "total_orders": total_orders,
+        "paid_orders": paid_orders,
     }
 
 
-# ---------------------------------
-# ADMIN: GET PAYMENT SETTINGS
-# ---------------------------------
-@router.get("/payment-settings")
-def get_payment_settings(
-    db: Session = Depends(get_db),
-    admin: User = Depends(require_admin_session),
-):
-    settings = db.query(PaymentSetting).all()
-    return [
-        {
-            "id": s.id,
-            "bank_name": s.bank_name,
-            "account_name": s.account_name,
-            "account_number": s.account_number,
-            "is_active": s.is_active,
-        }
-        for s in settings
-    ]
-
-
-# ---------------------------------
-# ADMIN: CREATE / UPDATE BANK DETAILS
-# ---------------------------------
-@router.post("/payment-settings")
-def upsert_payment_setting(
+# =============================
+# ADMIN: UPDATE PRODUCT STATUS
+# =============================
+@router.post("/products/{product_id}/status")
+def update_product_status(
+    product_id: str,
     payload: dict,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin_session),
+    admin=Depends(require_admin),
 ):
-    bank_name = payload.get("bank_name")
-    account_name = payload.get("account_name")
-    account_number = payload.get("account_number")
-    is_active = payload.get("is_active", True)
-
-    if not bank_name or not account_name or not account_number:
-        raise HTTPException(
-            status_code=400,
-            detail="Missing bank payment details",
-        )
-
-    setting = db.query(PaymentSetting).first()
-
-    if setting:
-        setting.bank_name = bank_name
-        setting.account_name = account_name
-        setting.account_number = account_number
-        setting.is_active = is_active
-    else:
-        setting = PaymentSetting(
-            bank_name=bank_name,
-            account_name=account_name,
-            account_number=account_number,
-            is_active=is_active,
-        )
-        db.add(setting)
-
-    db.commit()
-
-    return {"message": "Payment settings saved"}
-
-
-# ---------------------------------
-# ADMIN: UPLOAD PRODUCT IMAGE
-# ---------------------------------
-@router.post("/products/upload-image")
-def upload_product_image(
-    image: UploadFile = File(...),
-    admin: User = Depends(require_admin_session),
-):
-    if image.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid image type",
-        )
-
-    ext = os.path.splitext(image.filename)[1]
-    filename = f"{uuid.uuid4().hex}{ext}"
-    filepath = os.path.join(UPLOAD_DIR, filename)
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(404, "Product not found")
 
     try:
-        with open(filepath, "wb") as f:
-            f.write(image.file.read())
+        product.status = ProductStatus(payload.get("status"))
     except Exception:
+        raise HTTPException(400, "Invalid product status")
+
+    db.commit()
+    return {"message": "Product status updated"}
+
+
+# =============================
+# ADMIN: UPDATE ORDER STATUS (CANCEL)
+# =============================
+@router.post("/orders/{order_id}/cancel")
+def cancel_order(
+    order_id: str,
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    order.order_status = OrderStatus.cancelled
+    db.commit()
+
+    return {"message": "Order cancelled"}
+
+
+# =============================
+# ADMIN: UPDATE SHIPPING STATUS
+# =============================
+@router.post("/orders/{order_id}/shipping")
+def update_shipping_status(
+    order_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    if order.order_status != OrderStatus.paid:
         raise HTTPException(
-            status_code=500,
-            detail="Failed to save image",
+            400,
+            "Cannot ship order before payment is approved",
         )
 
-    return {
-        "url": f"/{UPLOAD_DIR}/{filename}",
-    }
+    try:
+        order.shipping_status = ShippingStatus(payload.get("status"))
+    except Exception:
+        raise HTTPException(400, "Invalid shipping status")
+
+    db.commit()
+    return {"message": "Shipping status updated"}
