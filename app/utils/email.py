@@ -1,53 +1,76 @@
 import os
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import logging
+import requests
 
-
-# =====================================================
-# EMAIL CONFIG (GMAIL SMTP)
-# =====================================================
-
-GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+MAILGUN_API_KEY = os.getenv("MAILGUN_API_KEY")
+MAILGUN_DOMAIN = os.getenv("MAILGUN_DOMAIN")
 EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "Karabo Online Store")
+EMAIL_FROM_ADDRESS = os.getenv(
+    "EMAIL_FROM_ADDRESS",
+    f"postmaster@{MAILGUN_DOMAIN}" if MAILGUN_DOMAIN else None,
+)
 
-if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD:
-    raise RuntimeError("GMAIL_ADDRESS and GMAIL_APP_PASSWORD must be set")
+logger = logging.getLogger(__name__)
 
-
-# =====================================================
-# CORE EMAIL SENDER
-# =====================================================
 
 def send_email(
     to_email: str,
     subject: str,
     html_content: str,
     text_content: str | None = None,
-):
+) -> bool:
     """
-    Send an email using Gmail SMTP (SSL).
+    Send email via Mailgun HTTP API.
+
+    HARD GUARANTEES:
+    - NEVER raises exceptions
+    - NEVER crashes app or request
+    - Returns True on success, False on failure
     """
 
-    msg = MIMEMultipart("alternative")
-    msg["From"] = f"{EMAIL_FROM_NAME} <{GMAIL_ADDRESS}>"
-    msg["To"] = to_email
-    msg["Subject"] = subject
+    # Absolute safety check (do NOT crash app)
+    if not MAILGUN_API_KEY or not MAILGUN_DOMAIN or not EMAIL_FROM_ADDRESS:
+        logger.error(
+            "Mailgun not configured | domain=%s from=%s",
+            MAILGUN_DOMAIN,
+            EMAIL_FROM_ADDRESS,
+        )
+        return False
+
+    data = {
+        "from": f"{EMAIL_FROM_NAME} <{EMAIL_FROM_ADDRESS}>",
+        "to": to_email,
+        "subject": subject,
+        "html": html_content,
+    }
 
     if text_content:
-        msg.attach(MIMEText(text_content, "plain"))
-
-    msg.attach(MIMEText(html_content, "html"))
+        data["text"] = text_content
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-            server.sendmail(
-                GMAIL_ADDRESS,
+        response = requests.post(
+            f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages",
+            auth=("api", MAILGUN_API_KEY),
+            data=data,
+            timeout=10,
+        )
+
+        if response.status_code != 200:
+            logger.error(
+                "Mailgun email failed | to=%s | status=%s | response=%s",
                 to_email,
-                msg.as_string(),
+                response.status_code,
+                response.text,
             )
+            return False
+
+        return True
+
     except Exception as e:
-        # Do NOT leak internal error details
-        raise RuntimeError("Failed to send email") from e
+        # FINAL SAFETY NET — email can NEVER break business logic
+        logger.exception(
+            "Mailgun email exception | to=%s | error=%s",
+            to_email,
+            str(e),
+        )
+        return False
