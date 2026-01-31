@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import os
 
 from sqlalchemy import text
@@ -40,8 +41,7 @@ app.add_middleware(
 Base.metadata.create_all(bind=engine)
 
 # =====================================================
-# ONE-TIME DB PATCH (FREE RENDER SAFE)
-# Adds users.is_verified if missing
+# ONE-TIME DB PATCH
 # =====================================================
 try:
     with engine.begin() as conn:
@@ -54,17 +54,15 @@ try:
             )
         )
 except Exception as e:
-    # Do not crash startup if column already exists
-    print("ℹ️ DB patch skipped or already applied:", e)
+    print("ℹ️ DB patch skipped:", e)
 
 # =========================
-# ADMIN BOOTSTRAP (ENV BASED)
+# ADMIN BOOTSTRAP
 # =========================
 def ensure_admin_user():
     admin_email = os.getenv("ADMIN_EMAIL")
     admin_password = os.getenv("ADMIN_PASSWORD")
 
-    # 🔒 If env vars not set, admin login is disabled (SAFE)
     if not admin_email or not admin_password:
         print("⚠️ ADMIN_EMAIL / ADMIN_PASSWORD not set")
         return
@@ -78,13 +76,11 @@ def ensure_admin_user():
                 password_hash=hash_password(admin_password),
                 role="admin",
                 is_active=True,
-                is_verified=True,  # 🔑 admin does not need email verification
+                is_verified=True,
             )
             db.add(admin)
             db.commit()
-            print("✅ Admin account created from environment variables")
-        else:
-            print("ℹ️ Admin account already exists")
+            print("✅ Admin created")
     finally:
         db.close()
 
@@ -101,6 +97,11 @@ app.include_router(orders.router, prefix="/api/orders", tags=["orders"])
 app.include_router(payments.router, prefix="/api/payments", tags=["payments"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+
+# =========================
+# STATIC UPLOADS (🔥 FIX)
+# =========================
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # =========================
 # HEALTH CHECK
