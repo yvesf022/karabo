@@ -63,6 +63,10 @@ def create_email_verification_token(user_id: str) -> str:
 
 
 def send_verification_email(user: User):
+    """
+    Non-blocking email send.
+    Email failure MUST NOT break auth flow.
+    """
     try:
         token = create_email_verification_token(str(user.id))
         verify_url = f"{FRONTEND_URL}/verify-email?token={token}"
@@ -139,12 +143,13 @@ def login(payload: LoginPayload, response: Response, db: Session = Depends(get_d
 
     token = create_token(user.id, user.role)
 
+    # ✅ FIXED COOKIE POLICY
     response.set_cookie(
         key="access_token",
         value=token,
         httponly=True,
         secure=COOKIE_SECURE,
-        samesite="none" if COOKIE_SECURE else "lax",
+        samesite="lax",      # 🔥 CRITICAL FIX
         path="/",
         max_age=60 * 60 * 24 * 7,
     )
@@ -184,7 +189,7 @@ def logout(response: Response):
         key="access_token",
         path="/",
         secure=COOKIE_SECURE,
-        samesite="none" if COOKIE_SECURE else "lax",
+        samesite="lax",      # 🔥 MUST MATCH SET COOKIE
     )
     response.headers["Cache-Control"] = "no-store"
     return {"message": "Logged out"}
