@@ -1,97 +1,38 @@
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import User
-from app.security import decode_token
+from app.security import (
+    get_current_user as _get_current_user,
+    require_admin as _require_admin,
+)
 
 
-# =========================
-# CURRENT USER (USER COOKIE)
-# =========================
+# =====================================================
+# USER AUTH DEPENDENCY
+# =====================================================
+
 def get_current_user(
-    request: Request,
+    request,
     db: Session = Depends(get_db),
-):
-    token = request.cookies.get("access_token")
-
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
-
-    payload = decode_token(token)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-        )
-
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
-        )
-
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-        )
-
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account disabled",
-        )
-
-    return user
+) -> User:
+    """
+    Backward-compatible wrapper.
+    Delegates all logic to app.security.get_current_user
+    """
+    return _get_current_user(request=request, db=db)
 
 
-# =========================
-# ADMIN SESSION (ADMIN COOKIE)
-# =========================
-def require_admin_session(
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    token = request.cookies.get("admin_access_token")
+# =====================================================
+# ADMIN AUTH DEPENDENCY
+# =====================================================
 
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Admin not authenticated",
-        )
-
-    payload = decode_token(token)
-    if not payload or payload.get("role") != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid admin token",
-        )
-
-    admin_id = payload.get("sub")
-    if not admin_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid admin token payload",
-        )
-
-    admin = db.query(User).filter(User.id == admin_id).first()
-    if not admin or admin.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Admin not found",
-        )
-
-    return admin
-
-
-# =========================
-# 🔒 BACKWARD-COMPAT ALIAS
-# =========================
-# Used by existing routes: products.py, admin.py, etc.
-require_admin = require_admin_session
+def require_admin(
+    user: User = Depends(get_current_user),
+) -> User:
+    """
+    Backward-compatible admin guard.
+    Delegates role enforcement to app.security.require_admin
+    """
+    return _require_admin(user)

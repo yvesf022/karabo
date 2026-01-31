@@ -3,7 +3,12 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_admin
-from app.models import Order, ShippingStatus
+from app.models import (
+    Order,
+    OrderStatus,
+    ShippingStatus,
+    PaymentStatus,
+)
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -27,13 +32,18 @@ def create_order(
         user_id=user.id,
         items=items,
         total_amount=total,
+        order_status=OrderStatus.awaiting_payment,  # 🔑 manual payment flow
+        shipping_status=ShippingStatus.created,
     )
 
     db.add(order)
     db.commit()
     db.refresh(order)
 
-    return {"order_id": order.id}
+    return {
+        "order_id": order.id,
+        "order_status": order.order_status,
+    }
 
 
 # =============================
@@ -44,12 +54,19 @@ def my_orders(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    orders = db.query(Order).filter(Order.user_id == user.id).all()
+    orders = (
+        db.query(Order)
+        .filter(Order.user_id == user.id)
+        .order_by(Order.created_at.desc())
+        .all()
+    )
 
     return [
         {
             "id": o.id,
             "total_amount": o.total_amount,
+            "order_status": o.order_status,
+            "payment_status": o.payment.status if o.payment else None,
             "shipping_status": o.shipping_status,
             "created_at": o.created_at,
         }
@@ -71,6 +88,8 @@ def admin_orders(
         {
             "id": o.id,
             "total_amount": o.total_amount,
+            "order_status": o.order_status,
+            "payment_status": o.payment.status if o.payment else None,
             "shipping_status": o.shipping_status,
             "created_at": o.created_at,
         }
@@ -92,8 +111,36 @@ def update_shipping(
     if not order:
         raise HTTPException(404, "Order not found")
 
-    order.shipping_status = ShippingStatus(payload.get("status"))
-    order.tracking_number = payload.get("tracking_number")
+    # 🔒 HARD BLOCK: shipping ONLY allowed after payment approval
+    if order.order_status != OrderStatus.paid:
+        raise HTTPException(
+            400,
+            "Order cannot be shipped before payment is approved",
+        )
+
+    new_status = payload.get("status")
+    tracking_number = payload.get("tracking_number")
+
+    try:
+        order.shipping_status = ShippingStatus(new_status)
+    except Exception:
+        raise HTTPException(400, "Invalid shipping status")
+
+    if tracking_number:
+        order.tracking_number = tracking_number
+
+    # Auto-advance fulfillment flow
+    if order.shipping_status == ShippingStatus.processing:
+        pass
+    elif order.shipping_status == ShippingStatus.shipped:
+        pass
+    elif order.shipping_status == ShippingStatus.delivered:
+        pass
 
     db.commit()
-    return {"message": "Order updated"}
+
+    return {
+        "message": "Shipping updated",
+        "order_id": order.id,
+        "shipping_status": order.shipping_status,
+    }

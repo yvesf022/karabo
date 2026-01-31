@@ -34,6 +34,14 @@ class ProductStatus(str, Enum):
     archived = "archived"
 
 
+class OrderStatus(str, Enum):
+    created = "created"
+    awaiting_payment = "awaiting_payment"
+    payment_under_review = "payment_under_review"
+    paid = "paid"
+    cancelled = "cancelled"
+
+
 class PaymentStatus(str, Enum):
     initiated = "initiated"
     proof_submitted = "proof_submitted"
@@ -71,13 +79,20 @@ class User(Base):
     role = Column(SqlEnum(UserRole), default=UserRole.user)
     is_active = Column(Boolean, default=True)
 
+    # 🔑 EMAIL VERIFICATION
+    is_verified = Column(Boolean, default=False)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    orders = relationship("Order", back_populates="user", cascade="all, delete-orphan")
+    orders = relationship(
+        "Order",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
 
 
 # =====================================================
-# PRODUCT (AMAZON-LEVEL)
+# PRODUCT
 # =====================================================
 
 class Product(Base):
@@ -85,29 +100,27 @@ class Product(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    # Core
     title = Column(String, nullable=False)
     short_description = Column(String)
     description = Column(Text)
 
-    # Commerce
     sku = Column(String, unique=True, index=True, nullable=False)
     price = Column(Float, nullable=False)
     compare_price = Column(Float)
 
-    # Media
+    brand = Column(String, index=True)
+    rating = Column(Float, default=0.0)
+    sales = Column(Integer, default=0)
+
     main_image = Column(String, nullable=False)
     images = Column(JSONB, default=list)
 
-    # Classification
     category = Column(String, nullable=False)
     specs = Column(JSONB, default=dict)
 
-    # Inventory
     stock = Column(Integer, default=0)
     in_stock = Column(Boolean, default=False)
 
-    # Status
     status = Column(SqlEnum(ProductStatus), default=ProductStatus.active)
 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -123,24 +136,32 @@ class Order(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
 
-    # Snapshot of purchased products
     items = Column(JSONB, nullable=False)
-
     total_amount = Column(Float, nullable=False)
 
+    order_status = Column(SqlEnum(OrderStatus), default=OrderStatus.created)
     shipping_status = Column(SqlEnum(ShippingStatus), default=ShippingStatus.created)
-    tracking_number = Column(String)
 
+    tracking_number = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="orders")
-    payment = relationship("Payment", back_populates="order", uselist=False, cascade="all, delete-orphan")
+    payment = relationship(
+        "Payment",
+        back_populates="order",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
 
 # =====================================================
-# PAYMENT (FIRST-CLASS DOMAIN)
+# PAYMENT
 # =====================================================
 
 class Payment(Base):
@@ -148,12 +169,18 @@ class Payment(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), unique=True)
+    order_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
 
     method = Column(SqlEnum(PaymentMethod), nullable=False)
     amount = Column(Float, nullable=False)
 
     proof_url = Column(String)
+
     status = Column(SqlEnum(PaymentStatus), default=PaymentStatus.initiated)
 
     reviewed_by_admin = Column(Boolean, default=False)
