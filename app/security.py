@@ -53,7 +53,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def create_token(user_id, role: str) -> str:
     payload = {
-        "sub": str(user_id),  # UUID → str
+        "sub": str(user_id),
         "role": role,
         "exp": datetime.utcnow() + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS),
         "iat": datetime.utcnow(),
@@ -61,7 +61,7 @@ def create_token(user_id, role: str) -> str:
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def decode_token(token: str) -> dict:
+def decode_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
@@ -73,12 +73,24 @@ def decode_token(token: str) -> dict:
 # =====================================================
 
 def get_token_from_request(request: Request) -> str | None:
-    # 1️⃣ Try HTTP-only cookie (PRIMARY)
-    token = request.cookies.get("access_token")
-    if token:
-        return token
+    """
+    Order matters:
+    1. Admin cookie
+    2. User cookie
+    3. Authorization header fallback
+    """
 
-    # 2️⃣ Fallback: Authorization header
+    # ✅ Admin cookie
+    admin_token = request.cookies.get("admin_access_token")
+    if admin_token:
+        return admin_token
+
+    # ✅ User cookie
+    user_token = request.cookies.get("access_token")
+    if user_token:
+        return user_token
+
+    # Fallback: Authorization header
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         return auth_header.split(" ", 1)[1]
