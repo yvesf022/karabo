@@ -51,6 +51,12 @@ class PaymentMethod(str, enum.Enum):
     bank_transfer = "bank_transfer"
 
 
+class ProductStatus(str, enum.Enum):
+    active = "active"
+    inactive = "inactive"
+    discontinued = "discontinued"
+
+
 # =====================================================
 # USER
 # =====================================================
@@ -107,7 +113,11 @@ class Product(Base):
     stock = Column(Integer, default=0)
     in_stock = Column(Boolean, default=True)
 
-    status = Column(String, default="active")
+    status = Column(
+        Enum(ProductStatus, name="product_status"),
+        default=ProductStatus.active,
+        nullable=False,
+    )
 
     created_at = Column(
         DateTime(timezone=True),
