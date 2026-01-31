@@ -1,4 +1,5 @@
 import os
+import logging
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
@@ -16,6 +17,8 @@ from app.security import (
 from app.utils.email import send_email
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+logger = logging.getLogger(__name__)
 
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() == "true"
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -60,20 +63,40 @@ def create_email_verification_token(user_id: str) -> str:
 
 
 def send_verification_email(user: User):
-    token = create_email_verification_token(str(user.id))
-    verify_url = f"{FRONTEND_URL}/verify-email?token={token}"
+    """
+    Non-critical side effect.
+    Email failure must NEVER affect user flows.
+    """
+    try:
+        token = create_email_verification_token(str(user.id))
+        verify_url = f"{FRONTEND_URL}/verify-email?token={token}"
 
-    send_email(
-        to_email=user.email,
-        subject="Verify your email address",
-        html_content=f"""
-        <h2>Karabo Online Store</h2>
-        <p>Please verify your email address:</p>
-        <p><a href="{verify_url}">Verify Email</a></p>
-        <p>This link expires in 30 minutes.</p>
-        """,
-        text_content=f"Verify your email: {verify_url}",
-    )
+        success = send_email(
+            to_email=user.email,
+            subject="Verify your email address",
+            html_content=f"""
+            <h2>Karabo Online Store</h2>
+            <p>Please verify your email address:</p>
+            <p><a href="{verify_url}">Verify Email</a></p>
+            <p>This link expires in 30 minutes.</p>
+            """,
+            text_content=f"Verify your email: {verify_url}",
+        )
+
+        if not success:
+            logger.warning(
+                "Verification email failed to send | user_id=%s | email=%s",
+                user.id,
+                user.email,
+            )
+
+    except Exception as e:
+        # Absolute final guard — nothing escapes
+        logger.warning(
+            "Verification email exception swallowed | user_id=%s | error=%s",
+            user.id,
+            str(e),
+        )
 
 
 # =====================================================
@@ -105,6 +128,7 @@ def register(
     db.commit()
     db.refresh(user)
 
+    # 🔒 Email is intentionally non-blocking
     send_verification_email(user)
 
     return {
