@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
 
+from sqlalchemy import text
+
 # 🔴 FORCE MODEL REGISTRATION
 import app.models  # noqa: F401
 
@@ -37,6 +39,24 @@ app.add_middleware(
 # =========================
 Base.metadata.create_all(bind=engine)
 
+# =====================================================
+# ONE-TIME DB PATCH (FREE RENDER SAFE)
+# Adds users.is_verified if missing
+# =====================================================
+try:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE
+                """
+            )
+        )
+except Exception as e:
+    # Do not crash startup if column already exists
+    print("ℹ️ DB patch skipped or already applied:", e)
+
 # =========================
 # ADMIN BOOTSTRAP (ENV BASED)
 # =========================
@@ -58,6 +78,7 @@ def ensure_admin_user():
                 password_hash=hash_password(admin_password),
                 role="admin",
                 is_active=True,
+                is_verified=True,  # 🔑 admin does not need email verification
             )
             db.add(admin)
             db.commit()
