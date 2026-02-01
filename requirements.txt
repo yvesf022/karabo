@@ -17,6 +17,6 @@ python-multipart==0.0.9
 pydantic==2.6.4
 email-validator==2.1.0.post1
 
-# Env & HTTP
+# Environment & HTTP
 python-dotenv==1.0.1
 requests==2.31.0
