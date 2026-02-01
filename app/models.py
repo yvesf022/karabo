@@ -10,16 +10,19 @@ from sqlalchemy import (
     DateTime,
     JSON,
     Enum,
+    ForeignKey,
+    Index,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 
 from app.database import Base
 
 
-# =====================================================
-# ENUMS (REQUIRED BY ROUTES)
-# =====================================================
+# =========================
+# ENUMS
+# =========================
 
 class OrderStatus(str, enum.Enum):
     pending = "pending"
@@ -57,34 +60,29 @@ class ProductStatus(str, enum.Enum):
     discontinued = "discontinued"
 
 
-# =====================================================
+# =========================
 # USER
-# =====================================================
+# =========================
 
 class User(Base):
     __tablename__ = "users"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-
-    email = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, nullable=False, unique=True, index=True)
     password_hash = Column(String, nullable=False)
 
-    full_name = Column(String, nullable=True)
-    phone = Column(String, nullable=True)
+    full_name = Column(String)
+    phone = Column(String)
 
-    role = Column(String, default="user")  # user | admin
+    role = Column(String, default="user")
     is_active = Column(Boolean, default=True)
 
-    created_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
-# =====================================================
+# =========================
 # PRODUCT
-# =====================================================
+# =========================
 
 class Product(Base):
     __tablename__ = "products"
@@ -92,23 +90,20 @@ class Product(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     title = Column(String, nullable=False)
-    short_description = Column(Text, nullable=True)
-    description = Column(Text, nullable=True)
+    short_description = Column(Text)
+    description = Column(Text)
 
-    sku = Column(String, nullable=True)
-    brand = Column(String, nullable=True)
+    sku = Column(String)
+    brand = Column(String)
 
     price = Column(Float, nullable=False)
-    compare_price = Column(Float, nullable=True)
+    compare_price = Column(Float)
 
-    rating = Column(Float, nullable=True)
+    rating = Column(Float)
     sales = Column(Integer, default=0)
 
-    main_image = Column(String, nullable=True)
-    images = Column(JSON, nullable=True)
-
-    category = Column(String, index=True, nullable=True)
-    specs = Column(JSON, nullable=True)
+    category = Column(String, index=True)
+    specs = Column(JSON)
 
     stock = Column(Integer, default=0)
     in_stock = Column(Boolean, default=True)
@@ -119,29 +114,64 @@ class Product(Base):
         nullable=False,
     )
 
-    created_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
-        nullable=False,
+    )
+
+    images = relationship(
+        "ProductImage",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="ProductImage.position",
     )
 
 
-# =====================================================
+Index("idx_products_status", Product.status)
+Index("idx_products_price", Product.price)
+Index("idx_products_created_at", Product.created_at)
+
+
+# =========================
+# PRODUCT IMAGES (MULTIPLE)
+# =========================
+
+class ProductImage(Base):
+    __tablename__ = "product_images"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    image_url = Column(String, nullable=False)
+    position = Column(Integer, default=0)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    product = relationship("Product", back_populates="images")
+
+
+# =========================
 # ORDER
-# =====================================================
+# =========================
 
 class Order(Base):
     __tablename__ = "orders"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    user_id = Column(UUID(as_uuid=True), nullable=False)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
 
     total_amount = Column(Float, nullable=False)
 
@@ -157,23 +187,24 @@ class Order(Base):
         nullable=False,
     )
 
-    created_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
-# =====================================================
+# =========================
 # PAYMENT
-# =====================================================
+# =========================
 
 class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    order_id = Column(UUID(as_uuid=True), nullable=False)
+    order_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     amount = Column(Float, nullable=False)
 
@@ -183,12 +214,28 @@ class Payment(Base):
         nullable=False,
     )
 
-    method = Column(
-        Enum(PaymentMethod, name="payment_method"),
-        nullable=True,
+    method = Column(Enum(PaymentMethod, name="payment_method"))
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+# =====================================================
+# PAYMENT PROOF
+# =====================================================
+
+class PaymentProof(Base):
+    __tablename__ = "payment_proofs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    payment_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("payments.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
 
-    created_at = Column(
+    file_url = Column(String, nullable=False)
+    uploaded_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
