@@ -1,14 +1,22 @@
-fastapi
-uvicorn
-sqlalchemy
-psycopg2-binary
-python-multipart
-python-jose
-pydantic
-python-dotenv
-email-validator
+fastapi==0.110.0
+uvicorn[standard]==0.27.1
 
+# Database
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+
+# Auth & Security
+python-jose==3.3.0
 passlib==1.7.4
 bcrypt==4.0.1
-requests
 
+# Forms & uploads
+python-multipart==0.0.9
+
+# Validation & settings
+pydantic==2.6.1
+email-validator==2.1.0.post1
+python-dotenv==1.0.1
+
+# Utilities
+requests==2.31.0
