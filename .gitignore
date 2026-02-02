@@ -1,16 +1,31 @@
+# =========================
 # Python
+# =========================
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .env
 
-# Virtual env
+# =========================
+# Virtual environments
+# =========================
 .venv/
 venv/
 
-# Uploads
-uploads/
-
-# Scripts with secrets
+# =========================
+# Secrets / scripts
+# =========================
 create_admin.py
+
+# =========================
+# Runtime uploaded files (IGNORE DATA)
+# =========================
+uploads/
+data/uploads/
+
+# =========================
+# Backend upload CODE (DO NOT IGNORE)
+# =========================
+!app/uploads/
+!app/uploads/**
