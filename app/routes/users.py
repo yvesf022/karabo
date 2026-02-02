@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
 from sqlalchemy.orm import Session
-from pathlib import Path
-import os
+import uuid
 
 from app.database import get_db
 from app.models import User
 from app.dependencies import get_current_user
+from app.cloudinary_client import upload_image
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -13,17 +13,17 @@ router = APIRouter(prefix="/users", tags=["users"])
 # AVATAR UPLOAD CONFIG
 # =========================
 
-AVATAR_DIR = Path("static/avatars")
 ALLOWED_TYPES = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
 }
+
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
 
 # =========================
-# USER: UPLOAD AVATAR
+# USER: UPLOAD AVATAR (CLOUDINARY)
 # =========================
 
 @router.post("/me/avatar", status_code=status.HTTP_200_OK)
@@ -42,46 +42,35 @@ def upload_avatar(
         )
 
     # -------------------------
-    # Read file safely
+    # Validate file size (stream-safe)
     # -------------------------
-    contents = file.file.read()
-    file.file.close()
+    file.file.seek(0, 2)
+    size = file.file.tell()
+    file.file.seek(0)
 
-    if len(contents) > MAX_FILE_SIZE:
+    if size > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Image size must be less than 5MB.",
         )
 
     # -------------------------
-    # Prepare storage
+    # Upload to Cloudinary
     # -------------------------
-    AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+    public_id = f"user_{current_user.id}_{uuid.uuid4().hex}"
 
-    extension = ALLOWED_TYPES[file.content_type]
-    filename = f"{current_user.id}{extension}"
-    filepath = AVATAR_DIR / filename
-
-    # -------------------------
-    # Remove old avatar if exists
-    # -------------------------
-    if current_user.avatar_url:
-        old_path = Path(current_user.avatar_url.lstrip("/"))
-        if old_path.exists() and old_path.is_file():
-            try:
-                old_path.unlink()
-            except Exception:
-                pass  # Do not block avatar update
+    avatar_url = upload_image(
+        file=file.file,
+        folder="avatars",
+        public_id=public_id,
+        allowed_formats=["jpg", "png", "webp"],
+    )
 
     # -------------------------
-    # Write new avatar (atomic overwrite)
+    # Update DB
     # -------------------------
-    with open(filepath, "wb") as buffer:
-        buffer.write(contents)
-
-    avatar_url = f"/static/avatars/{filename}"
-
     current_user.avatar_url = avatar_url
     db.commit()
+    db.refresh(current_user)
 
     return {"avatar_url": avatar_url}

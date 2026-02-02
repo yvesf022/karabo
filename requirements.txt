@@ -20,3 +20,6 @@ email-validator==2.1.0.post1
 # Environment & HTTP
 python-dotenv==1.0.1
 requests==2.31.0
+
+# Cloud storage (Render Free safe)
+cloudinary==1.39.0

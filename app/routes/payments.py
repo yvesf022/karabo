@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from sqlalchemy.orm import Session
-import uuid, os
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from sqlalchemy.orm import Session, joinedload
+import uuid
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_admin
@@ -12,18 +12,25 @@ from app.models import (
     Order,
     OrderStatus,
 )
+from app.cloudinary_client import upload_file
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
-UPLOAD_DIR = "uploads/payments"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# =========================
+# UPLOAD CONFIG
+# =========================
 
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
-MAX_FILE_SIZE_MB = 5
+ALLOWED_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "application/pdf",
+}
+
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
 
 # =====================================================
-# USER: CREATE PAYMENT (INITIAL RECORD)
+# USER: CREATE PAYMENT
 # =====================================================
 @router.post("/{order_id}")
 def create_payment(
@@ -37,17 +44,20 @@ def create_payment(
         .first()
     )
     if not order:
-        raise HTTPException(404, "Order not found")
+        raise HTTPException(status_code=404, detail="Order not found")
 
     if order.status != OrderStatus.pending:
         raise HTTPException(
-            400,
-            f"Cannot pay for order in status '{order.status}'",
+            status_code=400,
+            detail=f"Cannot pay for order in status '{order.status}'",
         )
 
     existing = db.query(Payment).filter(Payment.order_id == order.id).first()
     if existing:
-        raise HTTPException(400, "Payment already exists for this order")
+        raise HTTPException(
+            status_code=400,
+            detail="Payment already exists for this order",
+        )
 
     payment = Payment(
         order_id=order.id,
@@ -69,7 +79,7 @@ def create_payment(
 
 
 # =====================================================
-# USER: UPLOAD PAYMENT PROOF
+# USER: UPLOAD PAYMENT PROOF (CLOUDINARY)
 # =====================================================
 @router.post("/{payment_id}/proof")
 def upload_payment_proof(
@@ -85,36 +95,46 @@ def upload_payment_proof(
         .first()
     )
     if not payment:
-        raise HTTPException(404, "Payment not found")
+        raise HTTPException(status_code=404, detail="Payment not found")
 
     if payment.status != PaymentStatus.pending:
         raise HTTPException(
-            400,
-            f"Cannot upload proof for payment in status '{payment.status}'",
+            status_code=400,
+            detail=f"Cannot upload proof for payment in status '{payment.status}'",
         )
 
-    ext = os.path.splitext(proof.filename)[1].lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(400, "Invalid file type")
+    if proof.content_type not in ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file type. Only JPG, PNG, and PDF allowed.",
+        )
 
-    content = proof.file.read()
-    size_mb = len(content) / (1024 * 1024)
-    if size_mb > MAX_FILE_SIZE_MB:
-        raise HTTPException(400, "File too large (max 5MB)")
+    proof.file.seek(0, 2)
+    size = proof.file.tell()
+    proof.file.seek(0)
 
-    filename = f"{uuid.uuid4().hex}{ext}"
-    path = os.path.join(UPLOAD_DIR, filename)
+    if size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail="File too large (max 5MB)",
+        )
 
-    with open(path, "wb") as f:
-        f.write(content)
+    public_id = f"payment_{payment.id}_{uuid.uuid4().hex}"
+
+    proof_url = upload_file(
+        file=proof.file,
+        folder="payments",
+        public_id=public_id,
+    )
 
     proof_record = PaymentProof(
         payment_id=payment.id,
-        file_url=f"/uploads/payments/{filename}",
+        file_url=proof_url,
     )
 
     db.add(proof_record)
     db.commit()
+    db.refresh(proof_record)
 
     return {
         "message": "Payment proof uploaded",
@@ -123,11 +143,16 @@ def upload_payment_proof(
 
 
 # =====================================================
-# ADMIN: LIST PAYMENTS (WITH PROOFS)
+# ADMIN: LIST PAYMENTS
 # =====================================================
 @router.get("/admin", dependencies=[Depends(require_admin)])
 def admin_list_payments(db: Session = Depends(get_db)):
-    payments = db.query(Payment).order_by(Payment.created_at.desc()).all()
+    payments = (
+        db.query(Payment)
+        .options(joinedload(Payment.proof))
+        .order_by(Payment.created_at.desc())
+        .all()
+    )
 
     return [
         {
@@ -136,16 +161,15 @@ def admin_list_payments(db: Session = Depends(get_db)):
             "amount": p.amount,
             "status": p.status,
             "method": p.method,
-            "proofs": [
+            "proof": (
                 {
-                    "id": str(pr.id),
-                    "file_url": pr.file_url,
-                    "uploaded_at": pr.uploaded_at,
+                    "id": str(p.proof.id),
+                    "file_url": p.proof.file_url,
+                    "uploaded_at": p.proof.uploaded_at,
                 }
-                for pr in db.query(PaymentProof)
-                .filter(PaymentProof.payment_id == p.id)
-                .all()
-            ],
+                if p.proof
+                else None
+            ),
             "created_at": p.created_at,
         }
         for p in payments
@@ -164,21 +188,21 @@ def review_payment(
 ):
     payment = db.query(Payment).filter(Payment.id == payment_id).first()
     if not payment:
-        raise HTTPException(404, "Payment not found")
+        raise HTTPException(status_code=404, detail="Payment not found")
 
     order = db.query(Order).filter(Order.id == payment.order_id).first()
     if not order:
-        raise HTTPException(500, "Order not found")
+        raise HTTPException(status_code=500, detail="Order not found")
 
     if payment.status != PaymentStatus.pending:
         raise HTTPException(
-            400,
-            f"Payment already reviewed (status: {payment.status})",
+            status_code=400,
+            detail=f"Payment already reviewed (status: {payment.status})",
         )
 
     new_status = payload.get("status")
     if new_status not in (PaymentStatus.paid, PaymentStatus.rejected):
-        raise HTTPException(400, "Invalid payment status")
+        raise HTTPException(status_code=400, detail="Invalid payment status")
 
     if new_status == PaymentStatus.paid:
         payment.status = PaymentStatus.paid

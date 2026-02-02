@@ -68,16 +68,25 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
     email = Column(String, nullable=False, unique=True, index=True)
-    password_hash = Column(String, nullable=False)
+    hashed_password = Column(String, nullable=False)
 
     full_name = Column(String)
     phone = Column(String)
 
-    role = Column(String, default="user")
+    avatar_url = Column(String)
+
+    role = Column(String, default="user", index=True)
     is_active = Column(Boolean, default=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    orders = relationship(
+        "Order",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 # =========================
@@ -135,13 +144,14 @@ Index("idx_products_created_at", Product.created_at)
 
 
 # =========================
-# PRODUCT IMAGES (MULTIPLE)
+# PRODUCT IMAGES
 # =========================
 
 class ProductImage(Base):
     __tablename__ = "product_images"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
     product_id = Column(
         UUID(as_uuid=True),
         ForeignKey("products.id", ondelete="CASCADE"),
@@ -189,6 +199,13 @@ class Order(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    user = relationship("User", back_populates="orders")
+    payments = relationship(
+        "Payment",
+        back_populates="order",
+        cascade="all, delete-orphan",
+    )
+
 
 # =========================
 # PAYMENT
@@ -218,9 +235,18 @@ class Payment(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-# =====================================================
+    order = relationship("Order", back_populates="payments")
+    proof = relationship(
+        "PaymentProof",
+        back_populates="payment",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+# =========================
 # PAYMENT PROOF
-# =====================================================
+# =========================
 
 class PaymentProof(Base):
     __tablename__ = "payment_proofs"
@@ -235,8 +261,11 @@ class PaymentProof(Base):
     )
 
     file_url = Column(String, nullable=False)
+
     uploaded_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
     )
+
+    payment = relationship("Payment", back_populates="proof")

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 
@@ -15,16 +15,39 @@ class AdminLoginPayload(BaseModel):
 
 
 @router.post("/login")
-def admin_login(payload: AdminLoginPayload, response: Response, db: Session = Depends(get_db)):
-    admin = db.query(User).filter(User.email == payload.email).first()
+def admin_login(
+    payload: AdminLoginPayload,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """
+    Admin login:
+    - Admin must already exist (bootstrapped on startup)
+    - Credentials verified against DB
+    - Sets HTTP-only admin cookie
+    """
 
-    if not admin or not verify_password(payload.password, admin.password_hash):
+    admin = (
+        db.query(User)
+        .filter(
+            User.email == payload.email,
+            User.role == "admin",
+            User.is_active == True,
+        )
+        .first()
+    )
+
+    if not admin:
+        # Do NOT leak whether email exists
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    if not admin.is_active or admin.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin access denied")
+    if not verify_password(payload.password, admin.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = create_token(admin.id, admin.role)
+    token = create_token(
+        user_id=str(admin.id),
+        role="admin",
+    )
 
     response.set_cookie(
         key="admin_access_token",
@@ -33,7 +56,7 @@ def admin_login(payload: AdminLoginPayload, response: Response, db: Session = De
         secure=True,
         samesite="none",
         path="/",
-        max_age=60 * 60 * 8,
+        max_age=60 * 60 * 8,  # 8 hours
     )
 
     return {
@@ -45,6 +68,9 @@ def admin_login(payload: AdminLoginPayload, response: Response, db: Session = De
 
 @router.post("/logout")
 def admin_logout(response: Response):
+    """
+    Clears admin session cookie
+    """
     response.delete_cookie(
         key="admin_access_token",
         path="/",
@@ -56,6 +82,9 @@ def admin_logout(response: Response):
 
 @router.get("/me")
 def admin_me(admin: User = Depends(require_admin)):
+    """
+    Source of truth for admin session
+    """
     return {
         "id": str(admin.id),
         "email": admin.email,
