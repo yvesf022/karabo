@@ -77,7 +77,7 @@ class User(Base):
 
     avatar_url = Column(String)
 
-    role = Column(String, default="user", index=True)
+    is_admin = Column(Boolean, default=False, index=True)
     is_active = Column(Boolean, default=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -115,7 +115,7 @@ class Product(Base):
     specs = Column(JSON)
 
     stock = Column(Integer, default=0)
-    in_stock = Column(Boolean, default=True)
+    in_stock = Column(Boolean, default=False)
 
     status = Column(
         Enum(ProductStatus, name="product_status"),
@@ -231,7 +231,10 @@ class Payment(Base):
         nullable=False,
     )
 
-    method = Column(Enum(PaymentMethod, name="payment_method"))
+    method = Column(
+        Enum(PaymentMethod, name="payment_method"),
+        nullable=False,
+    )
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

@@ -1,8 +1,5 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-
-import os
 
 from app.database import init_database, SessionLocal
 from app.admin_auth import ensure_admin_exists
@@ -15,9 +12,9 @@ from app.admin_auth import router as admin_auth_router
 
 app = FastAPI(title="Karabo API")
 
-# =========================
-# CORS (COOKIE SAFE)
-# =========================
+# ======================================================
+# CORS (COOKIE-BASED AUTH SAFE)
+# ======================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,35 +27,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =========================
-# FILE SYSTEM SETUP
-# =========================
-
-# Ensure upload directories exist (CRITICAL)
-UPLOAD_DIRS = [
-    "static",
-    "static/avatars",
-    "uploads",
-    "uploads/products",
-    "uploads/payments",
-]
-
-for path in UPLOAD_DIRS:
-    os.makedirs(path, exist_ok=True)
-
-# =========================
-# STATIC FILES
-# =========================
-
-# User avatars
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Product images, payment proofs, etc.
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
-# =========================
+# ======================================================
 # ROUTES
-# =========================
+# ======================================================
 
 # Auth
 app.include_router(auth_router)          # /api/auth/*
@@ -77,9 +48,9 @@ app.include_router(admin_users.router, prefix="/api")
 # Password reset
 app.include_router(password_reset.router, prefix="/api")
 
-# =========================
+# ======================================================
 # STARTUP
-# =========================
+# ======================================================
 
 @app.on_event("startup")
 def startup():
@@ -87,12 +58,11 @@ def startup():
     Guarantees on every startup:
     - Database tables exist
     - Admin user exists (from ENV)
-    - Upload directories exist
     """
-    # DB setup
+    # Initialize DB
     init_database()
 
-    # Admin bootstrap
+    # Ensure admin account exists
     db = SessionLocal()
     try:
         ensure_admin_exists(db)

@@ -1,12 +1,9 @@
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import User
-from app.security import (
-    get_current_user as _get_current_user,
-    require_admin as _require_admin,
-)
+from app.security import decode_access_token
 
 
 # =====================================================
@@ -14,14 +11,28 @@ from app.security import (
 # =====================================================
 
 def get_current_user(
-    request,
+    request: Request,
     db: Session = Depends(get_db),
 ) -> User:
     """
-    Backward-compatible wrapper.
-    Delegates all logic to app.security.get_current_user
+    Resolves the currently authenticated user from the access token cookie.
     """
-    return _get_current_user(request=request, db=db)
+
+    token_data = decode_access_token(request)
+
+    user = (
+        db.query(User)
+        .filter(User.id == token_data.user_id, User.is_active == True)
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+
+    return user
 
 
 # =====================================================
@@ -32,7 +43,14 @@ def require_admin(
     user: User = Depends(get_current_user),
 ) -> User:
     """
-    Backward-compatible admin guard.
-    Delegates role enforcement to app.security.require_admin
+    Ensures the current user is an admin.
+    DB is the source of truth.
     """
-    return _require_admin(user)
+
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+
+    return user

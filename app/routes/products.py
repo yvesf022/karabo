@@ -9,26 +9,13 @@ from fastapi import (
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional, List
-import uuid
 
 from app.database import get_db
 from app.models import Product, ProductImage, ProductStatus
 from app.dependencies import require_admin
-from app.cloudinary_client import upload_image
+from app.uploads.service import handle_upload
 
 router = APIRouter(prefix="/products", tags=["products"])
-
-# =========================
-# IMAGE UPLOAD CONFIG
-# =========================
-
-ALLOWED_TYPES = {
-    "image/jpeg",
-    "image/png",
-    "image/webp",
-}
-
-MAX_FILE_SIZE = 8 * 1024 * 1024  # 8MB
 
 
 # =====================================================
@@ -48,8 +35,7 @@ def list_products(
     page: int = 1,
     per_page: int = 20,
 ):
-    if page < 1:
-        page = 1
+    page = max(page, 1)
     per_page = min(max(per_page, 1), 100)
 
     query = db.query(Product).filter(Product.status == ProductStatus.active)
@@ -57,7 +43,9 @@ def list_products(
     if search_query:
         query = query.filter(
             func.to_tsvector("english", Product.title).match(search_query)
-            | func.to_tsvector("english", Product.short_description).match(search_query)
+            | func.to_tsvector(
+                "english", Product.short_description
+            ).match(search_query)
         )
 
     if category:
@@ -69,7 +57,9 @@ def list_products(
     if max_price is not None:
         query = query.filter(Product.price <= max_price)
     if in_stock is not None:
-        query = query.filter(Product.stock > 0 if in_stock else Product.stock <= 0)
+        query = query.filter(
+            Product.stock > 0 if in_stock else Product.stock <= 0
+        )
     if min_rating is not None:
         query = query.filter(Product.rating >= min_rating)
 
@@ -84,7 +74,11 @@ def list_products(
     else:
         query = query.order_by(Product.created_at.desc())
 
-    products = query.offset((page - 1) * per_page).limit(per_page).all()
+    products = (
+        query.offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
 
     return [
         {
@@ -132,7 +126,7 @@ def create_product(payload: dict, db: Session = Depends(get_db)):
 
 
 # =====================================================
-# ADMIN: UPLOAD PRODUCT IMAGE (CLOUDINARY)
+# ADMIN: UPLOAD PRODUCT IMAGE (CENTRALIZED)
 # =====================================================
 @router.post(
     "/admin/{product_id}/images",
@@ -143,33 +137,18 @@ def upload_product_image(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    product = db.query(Product).filter(Product.id == product_id).first()
+    product = (
+        db.query(Product)
+        .filter(Product.id == product_id)
+        .first()
+    )
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid image type",
-        )
-
-    file.file.seek(0, 2)
-    size = file.file.tell()
-    file.file.seek(0)
-
-    if size > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Image too large",
-        )
-
-    public_id = f"product_{product.id}_{uuid.uuid4().hex}"
-
-    image_url = upload_image(
-        file=file.file,
+    image_url = handle_upload(
+        file=file,
         folder="products",
-        public_id=public_id,
-        allowed_formats=["jpg", "png", "webp"],
+        owner_id=str(product.id),
     )
 
     position = (
@@ -188,7 +167,10 @@ def upload_product_image(
     db.commit()
     db.refresh(image)
 
-    return {"url": image.image_url, "position": image.position}
+    return {
+        "url": image.image_url,
+        "position": image.position,
+    }
 
 
 # =====================================================
@@ -199,7 +181,11 @@ def upload_product_image(
     dependencies=[Depends(require_admin)],
 )
 def delete_product_image(image_id: str, db: Session = Depends(get_db)):
-    image = db.query(ProductImage).filter(ProductImage.id == image_id).first()
+    image = (
+        db.query(ProductImage)
+        .filter(ProductImage.id == image_id)
+        .first()
+    )
     if not image:
         raise HTTPException(status_code=404, detail="Image not found")
 
@@ -244,7 +230,10 @@ def reorder_product_images(
     )
 
     if len(images) != len(image_ids):
-        raise HTTPException(status_code=400, detail="Invalid image list")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid image list",
+        )
 
     image_map = {str(img.id): img for img in images}
 
@@ -257,14 +246,18 @@ def reorder_product_images(
 
 
 # =====================================================
-# ADMIN: SET MAIN IMAGE (POSITION 0)
+# ADMIN: SET MAIN IMAGE
 # =====================================================
 @router.post(
     "/admin/images/{image_id}/set-main",
     dependencies=[Depends(require_admin)],
 )
 def set_main_image(image_id: str, db: Session = Depends(get_db)):
-    image = db.query(ProductImage).filter(ProductImage.id == image_id).first()
+    image = (
+        db.query(ProductImage)
+        .filter(ProductImage.id == image_id)
+        .first()
+    )
     if not image:
         raise HTTPException(status_code=404, detail="Image not found")
 

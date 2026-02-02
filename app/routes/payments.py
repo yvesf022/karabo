@@ -1,6 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session, joinedload
-import uuid
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_admin
@@ -12,21 +11,9 @@ from app.models import (
     Order,
     OrderStatus,
 )
-from app.cloudinary_client import upload_file
+from app.uploads.service import handle_upload
 
 router = APIRouter(prefix="/payments", tags=["payments"])
-
-# =========================
-# UPLOAD CONFIG
-# =========================
-
-ALLOWED_TYPES = {
-    "image/jpeg",
-    "image/png",
-    "application/pdf",
-}
-
-MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
 
 # =====================================================
@@ -52,7 +39,11 @@ def create_payment(
             detail=f"Cannot pay for order in status '{order.status}'",
         )
 
-    existing = db.query(Payment).filter(Payment.order_id == order.id).first()
+    existing = (
+        db.query(Payment)
+        .filter(Payment.order_id == order.id)
+        .first()
+    )
     if existing:
         raise HTTPException(
             status_code=400,
@@ -79,7 +70,7 @@ def create_payment(
 
 
 # =====================================================
-# USER: UPLOAD PAYMENT PROOF (CLOUDINARY)
+# USER: UPLOAD PAYMENT PROOF (CENTRALIZED)
 # =====================================================
 @router.post("/{payment_id}/proof")
 def upload_payment_proof(
@@ -103,28 +94,10 @@ def upload_payment_proof(
             detail=f"Cannot upload proof for payment in status '{payment.status}'",
         )
 
-    if proof.content_type not in ALLOWED_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid file type. Only JPG, PNG, and PDF allowed.",
-        )
-
-    proof.file.seek(0, 2)
-    size = proof.file.tell()
-    proof.file.seek(0)
-
-    if size > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail="File too large (max 5MB)",
-        )
-
-    public_id = f"payment_{payment.id}_{uuid.uuid4().hex}"
-
-    proof_url = upload_file(
-        file=proof.file,
+    proof_url = handle_upload(
+        file=proof,
         folder="payments",
-        public_id=public_id,
+        owner_id=str(payment.id),
     )
 
     proof_record = PaymentProof(
@@ -186,11 +159,19 @@ def review_payment(
     db: Session = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    payment = db.query(Payment).filter(Payment.id == payment_id).first()
+    payment = (
+        db.query(Payment)
+        .filter(Payment.id == payment_id)
+        .first()
+    )
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
 
-    order = db.query(Order).filter(Order.id == payment.order_id).first()
+    order = (
+        db.query(Order)
+        .filter(Order.id == payment.order_id)
+        .first()
+    )
     if not order:
         raise HTTPException(status_code=500, detail="Order not found")
 
@@ -202,7 +183,10 @@ def review_payment(
 
     new_status = payload.get("status")
     if new_status not in (PaymentStatus.paid, PaymentStatus.rejected):
-        raise HTTPException(status_code=400, detail="Invalid payment status")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid payment status",
+        )
 
     if new_status == PaymentStatus.paid:
         payment.status = PaymentStatus.paid
