@@ -5,10 +5,12 @@ from pydantic import BaseModel, EmailStr
 
 from app.database import get_db
 from app.models import User
-from app.security import verify_password, get_password_hash, create_token
+from app.passwords import hash_password, verify_password
+from app.security import create_token
 from app.dependencies import require_admin
 
 router = APIRouter(prefix="/api/admin/auth", tags=["admin-auth"])
+
 
 # =====================================================
 # ADMIN BOOTSTRAP (RUNS ON STARTUP)
@@ -28,12 +30,15 @@ def ensure_admin_exists(db: Session):
         print("⚠️ ADMIN_EMAIL or ADMIN_PASSWORD not set — admin bootstrap skipped")
         return
 
-    admin = db.query(User).filter(User.email == admin_email).first()
+    admin = (
+        db.query(User)
+        .filter(User.email == admin_email)
+        .first()
+    )
 
     if admin:
-        # 🔒 Self-heal admin flag if needed
-        if not admin.is_admin:
-            admin.is_admin = True
+        if admin.role != "admin":
+            admin.role = "admin"
             db.commit()
             print("⚠️ Existing user upgraded to admin")
         else:
@@ -42,8 +47,8 @@ def ensure_admin_exists(db: Session):
 
     admin = User(
         email=admin_email,
-        hashed_password=get_password_hash(admin_password),
-        is_admin=True,
+        hashed_password=hash_password(admin_password),
+        role="admin",
         is_active=True,
     )
 
@@ -76,19 +81,24 @@ def admin_login(
         db.query(User)
         .filter(
             User.email == payload.email,
-            User.is_admin == True,
+            User.role == "admin",
             User.is_active == True,
         )
         .first()
     )
 
-    if not admin or not verify_password(payload.password, admin.hashed_password):
+    if not admin or not verify_password(
+        payload.password, admin.hashed_password
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials",
         )
 
-    token = create_token(user_id=str(admin.id))
+    token = create_token(
+        user_id=str(admin.id),
+        role="admin",
+    )
 
     response.set_cookie(
         key="admin_access_token",
@@ -103,7 +113,7 @@ def admin_login(
     return {
         "id": str(admin.id),
         "email": admin.email,
-        "is_admin": True,
+        "role": "admin",
     }
 
 
@@ -123,5 +133,5 @@ def admin_me(admin: User = Depends(require_admin)):
     return {
         "id": str(admin.id),
         "email": admin.email,
-        "is_admin": True,
+        "role": "admin",
     }
