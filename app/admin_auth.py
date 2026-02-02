@@ -7,44 +7,43 @@ from app.database import get_db
 from app.models import User
 from app.security import (
     verify_password,
+    hash_password,
     create_token,
     require_admin,
-    get_password_hash,
 )
 
 router = APIRouter(prefix="/api/admin/auth", tags=["admin-auth"])
 
-# =====================================================
-# ADMIN BOOTSTRAP (ENV-BASED)
-# =====================================================
 
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
-
+# =====================================================
+# ADMIN BOOTSTRAP (RUN ON STARTUP)
+# =====================================================
 
 def ensure_admin_exists(db: Session):
     """
-    Ensure a single admin account exists.
-    Safe to run on every startup.
+    Ensures a single admin user exists.
+    Admin credentials are sourced ONLY from env vars.
     """
 
-    if not ADMIN_EMAIL or not ADMIN_PASSWORD:
-        raise RuntimeError(
-            "ADMIN_EMAIL and ADMIN_PASSWORD must be set in environment variables"
-        )
+    admin_email = os.getenv("ADMIN_EMAIL")
+    admin_password = os.getenv("ADMIN_PASSWORD")
 
-    admin = (
+    if not admin_email or not admin_password:
+        # Do NOT crash production if admin envs are missing
+        return
+
+    existing = (
         db.query(User)
-        .filter(User.email == ADMIN_EMAIL, User.role == "admin")
+        .filter(User.email == admin_email, User.role == "admin")
         .first()
     )
 
-    if admin:
-        return  # Admin already exists
+    if existing:
+        return
 
     admin = User(
-        email=ADMIN_EMAIL,
-        hashed_password=get_password_hash(ADMIN_PASSWORD),
+        email=admin_email,
+        hashed_password=hash_password(admin_password),
         role="admin",
         is_active=True,
     )
@@ -54,7 +53,7 @@ def ensure_admin_exists(db: Session):
 
 
 # =====================================================
-# LOGIN SCHEMA
+# SCHEMAS
 # =====================================================
 
 class AdminLoginPayload(BaseModel):
@@ -63,7 +62,7 @@ class AdminLoginPayload(BaseModel):
 
 
 # =====================================================
-# ADMIN LOGIN
+# ROUTES
 # =====================================================
 
 @router.post("/login")
@@ -72,13 +71,6 @@ def admin_login(
     response: Response,
     db: Session = Depends(get_db),
 ):
-    """
-    Admin login:
-    - Admin must already exist (bootstrapped on startup)
-    - Credentials verified against DB
-    - Sets HTTP-only admin cookie
-    """
-
     admin = (
         db.query(User)
         .filter(
@@ -89,10 +81,10 @@ def admin_login(
         .first()
     )
 
-    if not admin:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    if not verify_password(payload.password, admin.hashed_password):
+    if not admin or not verify_password(
+        payload.password,
+        admin.hashed_password,
+    ):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_token(
@@ -117,15 +109,8 @@ def admin_login(
     }
 
 
-# =====================================================
-# ADMIN LOGOUT
-# =====================================================
-
 @router.post("/logout")
 def admin_logout(response: Response):
-    """
-    Clears admin session cookie
-    """
     response.delete_cookie(
         key="admin_access_token",
         path="/",
@@ -135,15 +120,8 @@ def admin_logout(response: Response):
     return {"message": "Admin logged out"}
 
 
-# =====================================================
-# ADMIN SESSION (SOURCE OF TRUTH)
-# =====================================================
-
 @router.get("/me")
 def admin_me(admin: User = Depends(require_admin)):
-    """
-    Source of truth for admin session
-    """
     return {
         "id": str(admin.id),
         "email": admin.email,
