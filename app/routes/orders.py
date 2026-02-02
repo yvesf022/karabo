@@ -2,38 +2,36 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user, require_admin
+from app.security import get_current_user, require_admin
 from app.models import (
     Order,
     OrderStatus,
     ShippingStatus,
-    PaymentStatus,
+    User,
 )
 
-router = APIRouter(prefix="/orders", tags=["orders"])
+router = APIRouter(prefix="/api/orders", tags=["orders"])
 
 
-# =============================
+# =====================================================
 # USER: CREATE ORDER
-# =============================
+# =====================================================
 @router.post("")
 def create_order(
     payload: dict,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
-    items = payload.get("items")
     total = payload.get("total_amount")
 
-    if not items or not total:
+    if not total:
         raise HTTPException(400, "Invalid order data")
 
     order = Order(
         user_id=user.id,
-        items=items,
         total_amount=total,
-        order_status=OrderStatus.awaiting_payment,  # 🔑 manual payment flow
-        shipping_status=ShippingStatus.created,
+        status=OrderStatus.pending,          # ✅ valid enum
+        shipping_status=ShippingStatus.pending,
     )
 
     db.add(order)
@@ -41,18 +39,18 @@ def create_order(
     db.refresh(order)
 
     return {
-        "order_id": order.id,
-        "order_status": order.order_status,
+        "order_id": str(order.id),
+        "status": order.status,
     }
 
 
-# =============================
+# =====================================================
 # USER: MY ORDERS
-# =============================
+# =====================================================
 @router.get("/my")
 def my_orders(
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     orders = (
         db.query(Order)
@@ -63,10 +61,9 @@ def my_orders(
 
     return [
         {
-            "id": o.id,
+            "id": str(o.id),
             "total_amount": o.total_amount,
-            "order_status": o.order_status,
-            "payment_status": o.payment.status if o.payment else None,
+            "status": o.status,
             "shipping_status": o.shipping_status,
             "created_at": o.created_at,
         }
@@ -74,22 +71,21 @@ def my_orders(
     ]
 
 
-# =============================
-# ADMIN: LIST ORDERS
-# =============================
+# =====================================================
+# ADMIN: LIST ALL ORDERS
+# =====================================================
 @router.get("/admin")
 def admin_orders(
     db: Session = Depends(get_db),
-    admin=Depends(require_admin),
+    admin: User = Depends(require_admin),
 ):
     orders = db.query(Order).order_by(Order.created_at.desc()).all()
 
     return [
         {
-            "id": o.id,
+            "id": str(o.id),
             "total_amount": o.total_amount,
-            "order_status": o.order_status,
-            "payment_status": o.payment.status if o.payment else None,
+            "status": o.status,
             "shipping_status": o.shipping_status,
             "created_at": o.created_at,
         }
@@ -97,50 +93,37 @@ def admin_orders(
     ]
 
 
-# =============================
-# ADMIN: UPDATE SHIPPING
-# =============================
+# =====================================================
+# ADMIN: UPDATE SHIPPING STATUS
+# =====================================================
 @router.post("/admin/{order_id}/shipping")
 def update_shipping(
     order_id: str,
     payload: dict,
     db: Session = Depends(get_db),
-    admin=Depends(require_admin),
+    admin: User = Depends(require_admin),
 ):
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "Order not found")
 
-    # 🔒 HARD BLOCK: shipping ONLY allowed after payment approval
-    if order.order_status != OrderStatus.paid:
+    if order.status != OrderStatus.paid:
         raise HTTPException(
             400,
             "Order cannot be shipped before payment is approved",
         )
 
     new_status = payload.get("status")
-    tracking_number = payload.get("tracking_number")
 
     try:
         order.shipping_status = ShippingStatus(new_status)
     except Exception:
         raise HTTPException(400, "Invalid shipping status")
 
-    if tracking_number:
-        order.tracking_number = tracking_number
-
-    # Auto-advance fulfillment flow
-    if order.shipping_status == ShippingStatus.processing:
-        pass
-    elif order.shipping_status == ShippingStatus.shipped:
-        pass
-    elif order.shipping_status == ShippingStatus.delivered:
-        pass
-
     db.commit()
 
     return {
         "message": "Shipping updated",
-        "order_id": order.id,
+        "order_id": str(order.id),
         "shipping_status": order.shipping_status,
     }
