@@ -1,18 +1,70 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 
 from app.database import get_db
 from app.models import User
-from app.security import verify_password, create_token, require_admin
+from app.security import (
+    verify_password,
+    create_token,
+    require_admin,
+    get_password_hash,
+)
 
 router = APIRouter(prefix="/api/admin/auth", tags=["admin-auth"])
 
+# =====================================================
+# ADMIN BOOTSTRAP (ENV-BASED)
+# =====================================================
+
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+
+
+def ensure_admin_exists(db: Session):
+    """
+    Ensure a single admin account exists.
+    Safe to run on every startup.
+    """
+
+    if not ADMIN_EMAIL or not ADMIN_PASSWORD:
+        raise RuntimeError(
+            "ADMIN_EMAIL and ADMIN_PASSWORD must be set in environment variables"
+        )
+
+    admin = (
+        db.query(User)
+        .filter(User.email == ADMIN_EMAIL, User.role == "admin")
+        .first()
+    )
+
+    if admin:
+        return  # Admin already exists
+
+    admin = User(
+        email=ADMIN_EMAIL,
+        hashed_password=get_password_hash(ADMIN_PASSWORD),
+        role="admin",
+        is_active=True,
+    )
+
+    db.add(admin)
+    db.commit()
+
+
+# =====================================================
+# LOGIN SCHEMA
+# =====================================================
 
 class AdminLoginPayload(BaseModel):
     email: EmailStr
     password: str
 
+
+# =====================================================
+# ADMIN LOGIN
+# =====================================================
 
 @router.post("/login")
 def admin_login(
@@ -38,7 +90,6 @@ def admin_login(
     )
 
     if not admin:
-        # Do NOT leak whether email exists
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not verify_password(payload.password, admin.hashed_password):
@@ -66,6 +117,10 @@ def admin_login(
     }
 
 
+# =====================================================
+# ADMIN LOGOUT
+# =====================================================
+
 @router.post("/logout")
 def admin_logout(response: Response):
     """
@@ -79,6 +134,10 @@ def admin_logout(response: Response):
     )
     return {"message": "Admin logged out"}
 
+
+# =====================================================
+# ADMIN SESSION (SOURCE OF TRUTH)
+# =====================================================
 
 @router.get("/me")
 def admin_me(admin: User = Depends(require_admin)):
