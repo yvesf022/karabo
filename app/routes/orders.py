@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.security import get_current_user, require_admin
+from app.dependencies import get_current_user, require_admin
 from app.models import (
     Order,
     OrderStatus,
@@ -30,7 +30,7 @@ def create_order(
     order = Order(
         user_id=user.id,
         total_amount=total,
-        status=OrderStatus.pending,          # ✅ valid enum
+        status=OrderStatus.pending,
         shipping_status=ShippingStatus.pending,
     )
 
