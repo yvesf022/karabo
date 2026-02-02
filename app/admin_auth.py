@@ -7,49 +7,53 @@ from app.database import get_db
 from app.models import User
 from app.security import (
     verify_password,
-    hash_password,
     create_token,
     require_admin,
+    hash_password,   # ✅ correct helper
 )
 
 router = APIRouter(prefix="/api/admin/auth", tags=["admin-auth"])
 
 
 # =====================================================
-# ADMIN BOOTSTRAP (RUN ON STARTUP)
+# ADMIN BOOTSTRAP (RUNS ON STARTUP)
 # =====================================================
 
 def ensure_admin_exists(db: Session):
     """
-    Ensures a single admin user exists.
-    Admin credentials are sourced ONLY from env vars.
+    Ensures exactly one admin exists.
+    Admin credentials come ONLY from ENV.
+    Safe to run on every startup.
     """
 
     admin_email = os.getenv("ADMIN_EMAIL")
     admin_password = os.getenv("ADMIN_PASSWORD")
 
     if not admin_email or not admin_password:
-        # Do NOT crash production if admin envs are missing
-        return
+        raise RuntimeError(
+            "ADMIN_EMAIL and ADMIN_PASSWORD must be set in environment variables"
+        )
 
-    existing = (
+    admin = (
         db.query(User)
         .filter(User.email == admin_email, User.role == "admin")
         .first()
     )
 
-    if existing:
-        return
+    if admin:
+        return  # ✅ already exists, do nothing
 
     admin = User(
         email=admin_email,
-        hashed_password=hash_password(admin_password),
+        password_hash=hash_password(admin_password),  # ✅ CORRECT COLUMN
         role="admin",
         is_active=True,
     )
 
     db.add(admin)
     db.commit()
+
+    print("✅ Admin user created from environment variables")
 
 
 # =====================================================
@@ -81,10 +85,10 @@ def admin_login(
         .first()
     )
 
-    if not admin or not verify_password(
-        payload.password,
-        admin.hashed_password,
-    ):
+    if not admin:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    if not verify_password(payload.password, admin.password_hash):  # ✅ FIXED
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_token(
@@ -99,7 +103,7 @@ def admin_login(
         secure=True,
         samesite="none",
         path="/",
-        max_age=60 * 60 * 8,  # 8 hours
+        max_age=60 * 60 * 8,
     )
 
     return {
