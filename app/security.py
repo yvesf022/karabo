@@ -6,7 +6,10 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import User
-from app.passwords import verify_password
+
+# ======================================================
+# JWT CONFIG
+# ======================================================
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
@@ -15,6 +18,10 @@ if not SECRET_KEY:
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 7
 
+
+# ======================================================
+# TOKEN CREATION
+# ======================================================
 
 def create_token(user_id: str, role: str) -> str:
     payload = {
@@ -26,6 +33,10 @@ def create_token(user_id: str, role: str) -> str:
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
+# ======================================================
+# TOKEN DECODING
+# ======================================================
+
 def decode_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -33,13 +44,27 @@ def decode_token(token: str) -> dict | None:
         return None
 
 
+# ✅ BACKWARD-COMPATIBILITY ALIAS (FIX)
+def decode_access_token(token: str) -> dict | None:
+    return decode_token(token)
+
+
+# ======================================================
+# TOKEN EXTRACTION
+# ======================================================
+
 def get_token_from_request(request: Request) -> str | None:
     return (
         request.cookies.get("admin_access_token")
         or request.cookies.get("access_token")
-        or request.headers.get("Authorization", "").replace("Bearer ", "") or None
+        or request.headers.get("Authorization", "").replace("Bearer ", "")
+        or None
     )
 
+
+# ======================================================
+# CURRENT USER
+# ======================================================
 
 def get_current_user(
     request: Request,
@@ -62,6 +87,10 @@ def get_current_user(
 
     return user
 
+
+# ======================================================
+# ADMIN GUARD
+# ======================================================
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != "admin":
