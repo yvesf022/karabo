@@ -18,14 +18,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# =========================
-# PERSISTENT DATA DIRECTORIES
-# =========================
-# These paths are mounted to a Render disk
-RUN mkdir -p /data/static/avatars \
-             /data/uploads/products \
-             /data/uploads/payments
-
 # Expose port (Render uses 10000)
 EXPOSE 10000
 

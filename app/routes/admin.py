@@ -25,7 +25,7 @@ def admin_dashboard(
     total_orders = db.query(Order).count()
     paid_orders = (
         db.query(Order)
-        .filter(Order.order_status == OrderStatus.paid)
+        .filter(Order.status == OrderStatus.paid)  # ✅ FIXED: was order_status
         .count()
     )
 
@@ -73,7 +73,7 @@ def cancel_order(
     if not order:
         raise HTTPException(404, "Order not found")
 
-    order.order_status = OrderStatus.cancelled
+    order.status = OrderStatus.cancelled  # ✅ FIXED: was order_status
     db.commit()
 
     return {"message": "Order cancelled"}
@@ -93,7 +93,7 @@ def update_shipping_status(
     if not order:
         raise HTTPException(404, "Order not found")
 
-    if order.order_status != OrderStatus.paid:
+    if order.status != OrderStatus.paid:  # ✅ FIXED: was order_status
         raise HTTPException(
             400,
             "Cannot ship order before payment is approved",

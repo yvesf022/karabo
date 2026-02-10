@@ -77,7 +77,8 @@ class User(Base):
 
     avatar_url = Column(String)
 
-    is_admin = Column(Boolean, default=False, index=True)
+    # ✅ FIXED: Added role column
+    role = Column(String, default="user", nullable=False)
     is_active = Column(Boolean, default=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -87,6 +88,11 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+
+    # ✅ ADDED: Property for backward compatibility
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "admin"
 
 
 # =========================

@@ -47,7 +47,8 @@ def require_admin(
     DB is the source of truth.
     """
 
-    if not user.is_admin:
+    # ✅ FIXED: Use role field instead of is_admin property
+    if user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",

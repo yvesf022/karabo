@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from jose import jwt, JWTError
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.models import User
@@ -20,6 +21,15 @@ ACCESS_TOKEN_EXPIRE_DAYS = 7
 
 
 # ======================================================
+# TOKEN DATA SCHEMA
+# ======================================================
+
+class TokenData(BaseModel):
+    user_id: str
+    role: str
+
+
+# ======================================================
 # TOKEN CREATION
 # ======================================================
 
@@ -34,26 +44,58 @@ def create_token(user_id: str, role: str) -> str:
 
 
 # ======================================================
-# TOKEN DECODING
+# TOKEN DECODING (STRING INPUT)
 # ======================================================
 
 def decode_token(token: str) -> dict | None:
+    """Decode a JWT token string and return the payload."""
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         return None
 
 
-# ✅ BACKWARD-COMPATIBILITY ALIAS (FIX)
-def decode_access_token(token: str) -> dict | None:
-    return decode_token(token)
+# ======================================================
+# TOKEN EXTRACTION & DECODING (REQUEST INPUT)
+# ======================================================
+
+def decode_access_token(request: Request) -> TokenData:
+    """
+    ✅ FIXED: Extract token from request and decode it.
+    Returns TokenData object.
+    """
+    token = (
+        request.cookies.get("admin_access_token")
+        or request.cookies.get("access_token")
+        or request.headers.get("Authorization", "").replace("Bearer ", "")
+        or None
+    )
+    
+    if not token:
+        raise HTTPException(
+            status_code=401, 
+            detail="Not authenticated"
+        )
+
+    payload = decode_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=401, 
+            detail="Invalid or expired token"
+        )
+
+    return TokenData(
+        user_id=payload["sub"],
+        role=payload.get("role", "user")
+    )
 
 
 # ======================================================
-# TOKEN EXTRACTION
+# TOKEN EXTRACTION HELPER
 # ======================================================
 
 def get_token_from_request(request: Request) -> str | None:
+    """Extract token string from request cookies or headers."""
     return (
         request.cookies.get("admin_access_token")
         or request.cookies.get("access_token")

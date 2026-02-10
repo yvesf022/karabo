@@ -10,7 +10,8 @@ from app.models import (
     User,
 )
 
-router = APIRouter(prefix="/api/orders", tags=["orders"])
+# ✅ FIXED: Changed prefix from /api/orders to /orders (since /api is added in main.py)
+router = APIRouter(prefix="/orders", tags=["orders"])
 
 
 # =====================================================

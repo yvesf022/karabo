@@ -13,7 +13,8 @@ from app.models import (
 )
 from app.uploads.service import handle_upload
 
-router = APIRouter(prefix="/payments", tags=["payments"])
+# ✅ FIXED: Changed prefix from /payments to /api/payments
+router = APIRouter(prefix="/api/payments", tags=["payments"])
 
 
 # =====================================================
@@ -182,13 +183,13 @@ def review_payment(
         )
 
     new_status = payload.get("status")
-    if new_status not in (PaymentStatus.paid, PaymentStatus.rejected):
+    if new_status not in (PaymentStatus.paid.value, PaymentStatus.rejected.value):
         raise HTTPException(
             status_code=400,
             detail="Invalid payment status",
         )
 
-    if new_status == PaymentStatus.paid:
+    if new_status == PaymentStatus.paid.value:
         payment.status = PaymentStatus.paid
         order.status = OrderStatus.paid
     else:
