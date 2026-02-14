@@ -100,6 +100,42 @@ def list_products(
 
 
 # =====================================================
+# PUBLIC: GET SINGLE PRODUCT  ✅ SAFE ADDITION
+# =====================================================
+@router.get("/{product_id}")
+def get_product(product_id: str, db: Session = Depends(get_db)):
+    product = (
+        db.query(Product)
+        .filter(
+            Product.id == product_id,
+            Product.status == ProductStatus.active,
+        )
+        .first()
+    )
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    return {
+        "id": str(product.id),
+        "title": product.title,
+        "short_description": product.short_description,
+        "description": product.description,
+        "price": product.price,
+        "compare_price": product.compare_price,
+        "brand": product.brand,
+        "rating": product.rating,
+        "sales": product.sales,
+        "category": product.category,
+        "stock": product.stock,
+        "in_stock": product.stock > 0,
+        "main_image": product.images[0].image_url if product.images else None,
+        "images": [img.image_url for img in product.images],
+        "created_at": product.created_at,
+    }
+
+
+# =====================================================
 # ADMIN: CREATE PRODUCT
 # =====================================================
 @router.post("", dependencies=[Depends(require_admin)])
