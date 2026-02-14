@@ -17,7 +17,6 @@ from app.database import get_db
 from app.models import (
     Product,
     ProductImage,
-    ProductStatus,
     BulkUpload,
     BulkUploadStatus,
 )
@@ -48,7 +47,8 @@ def list_products(
     page = max(page, 1)
     per_page = min(max(per_page, 1), 100)
 
-    query = db.query(Product).filter(Product.status == ProductStatus.active)
+    # 🔥 FIX: compare with string
+    query = db.query(Product).filter(Product.status == "active")
 
     if search_query:
         query = query.filter(
@@ -108,11 +108,13 @@ def list_products(
 # =====================================================
 @router.get("/{product_id}")
 def get_product(product_id: str, db: Session = Depends(get_db)):
+
+    # 🔥 FIX: compare with string
     product = (
         db.query(Product)
         .filter(
             Product.id == product_id,
-            Product.status == ProductStatus.active,
+            Product.status == "active",
         )
         .first()
     )
@@ -152,7 +154,7 @@ def get_product(product_id: str, db: Session = Depends(get_db)):
 @router.post("", dependencies=[Depends(require_admin)])
 def create_product(payload: dict, db: Session = Depends(get_db)):
     product = Product(**payload)
-    product.status = ProductStatus.active
+    product.status = "active"
     product.in_stock = product.stock > 0
 
     db.add(product)
@@ -248,7 +250,7 @@ async def bulk_upload_products(
                 parent_asin=parent_asin,
                 stock=int(row.get("stock", 10) or 10),
                 in_stock=str(row.get("in_stock", "true")).lower() == "true",
-                status=ProductStatus.active,
+                status="active",
             )
 
             db.add(product)
