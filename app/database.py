@@ -37,7 +37,7 @@ def get_db():
 
 
 # ======================================================
-# 🔥 DATABASE BOOTSTRAP (ENUM SAFE + AUTO REPAIR)
+# 🔥 DATABASE BOOTSTRAP (SAFE + AUTO SYNC)
 # ======================================================
 
 def init_database():
@@ -45,8 +45,8 @@ def init_database():
     PostgreSQL-safe, idempotent DB initialization.
 
     Guarantees on every startup:
-    - Enums exist
-    - Enum type mismatches are repaired
+    - Required ENUMs exist
+    - Missing Product columns are auto-added
     - Tables exist
     - Safe for Render (no shell required)
     """
@@ -54,40 +54,7 @@ def init_database():
     with engine.begin() as conn:
 
         # ==================================================
-        # 🔥 CRITICAL FIX: product_status ENUM AUTO-REPAIR
-        # ==================================================
-
-        # 1️⃣ Ensure enum exists
-        conn.execute(text("""
-        DO $$ BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM pg_type WHERE typname = 'product_status'
-            ) THEN
-                CREATE TYPE product_status AS ENUM ('active','inactive','discontinued');
-            END IF;
-        END $$;
-        """))
-
-        # 2️⃣ Convert products.status to ENUM if it is VARCHAR
-        conn.execute(text("""
-        DO $$
-        BEGIN
-            IF EXISTS (
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_name = 'products'
-                AND column_name = 'status'
-                AND data_type != 'USER-DEFINED'
-            ) THEN
-                ALTER TABLE products
-                ALTER COLUMN status TYPE product_status
-                USING status::product_status;
-            END IF;
-        END $$;
-        """))
-
-        # ==================================================
-        # OTHER ENUMS (SAFE CREATE)
+        # 🔥 CREATE REQUIRED ENUMS (SAFE)
         # ==================================================
 
         conn.execute(text("""
@@ -130,6 +97,108 @@ def init_database():
         END $$;
         """))
 
+        # ==================================================
+        # 🔥 AUTO-SYNC PRODUCTS TABLE (SAFE MIGRATION)
+        # ==================================================
+
+        # parent_asin
+        conn.execute(text("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='products'
+                AND column_name='parent_asin'
+            ) THEN
+                ALTER TABLE products ADD COLUMN parent_asin VARCHAR;
+            END IF;
+        END $$;
+        """))
+
+        # rating_number
+        conn.execute(text("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='products'
+                AND column_name='rating_number'
+            ) THEN
+                ALTER TABLE products ADD COLUMN rating_number INTEGER DEFAULT 0;
+            END IF;
+        END $$;
+        """))
+
+        # main_category
+        conn.execute(text("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='products'
+                AND column_name='main_category'
+            ) THEN
+                ALTER TABLE products ADD COLUMN main_category VARCHAR;
+            END IF;
+        END $$;
+        """))
+
+        # categories
+        conn.execute(text("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='products'
+                AND column_name='categories'
+            ) THEN
+                ALTER TABLE products ADD COLUMN categories JSON;
+            END IF;
+        END $$;
+        """))
+
+        # details
+        conn.execute(text("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='products'
+                AND column_name='details'
+            ) THEN
+                ALTER TABLE products ADD COLUMN details JSON;
+            END IF;
+        END $$;
+        """))
+
+        # features
+        conn.execute(text("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='products'
+                AND column_name='features'
+            ) THEN
+                ALTER TABLE products ADD COLUMN features JSON;
+            END IF;
+        END $$;
+        """))
+
+        # store
+        conn.execute(text("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='products'
+                AND column_name='store'
+            ) THEN
+                ALTER TABLE products ADD COLUMN store VARCHAR;
+            END IF;
+        END $$;
+        """))
+
     # ==================================================
     # CREATE TABLES (AFTER ENUMS EXIST)
     # ==================================================
@@ -138,4 +207,4 @@ def init_database():
     Base.metadata.create_all(bind=engine)
 
     print("✅ Database verified (enums, tables, indexes, FKs)")
-    print("🔥 product_status enum auto-repair applied if needed")
+    print("🔥 Products table auto-synced successfully")
