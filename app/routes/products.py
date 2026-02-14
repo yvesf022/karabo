@@ -42,7 +42,6 @@ def list_products(
     max_price: Optional[float] = None,
     in_stock: Optional[bool] = None,
     min_rating: Optional[float] = None,
-    sort: Optional[str] = "featured",
     page: int = 1,
     per_page: int = 20,
 ):
@@ -105,7 +104,83 @@ def list_products(
 
 
 # =====================================================
-# ADMIN: BULK UPLOAD FROM CSV 🚀
+# PUBLIC: GET SINGLE PRODUCT
+# =====================================================
+@router.get("/{product_id}")
+def get_product(product_id: str, db: Session = Depends(get_db)):
+    product = (
+        db.query(Product)
+        .filter(
+            Product.id == product_id,
+            Product.status == ProductStatus.active,
+        )
+        .first()
+    )
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    return {
+        "id": str(product.id),
+        "title": product.title,
+        "short_description": product.short_description,
+        "description": product.description,
+        "price": product.price,
+        "compare_price": product.compare_price,
+        "brand": product.brand,
+        "store": product.store,
+        "parent_asin": product.parent_asin,
+        "rating": product.rating,
+        "rating_number": product.rating_number,
+        "sales": product.sales,
+        "category": product.category,
+        "main_category": product.main_category,
+        "categories": product.categories,
+        "features": product.features,
+        "details": product.details,
+        "stock": product.stock,
+        "in_stock": product.stock > 0,
+        "main_image": product.images[0].image_url if product.images else None,
+        "images": [img.image_url for img in product.images],
+        "created_at": product.created_at,
+    }
+
+
+# =====================================================
+# ADMIN: CREATE PRODUCT
+# =====================================================
+@router.post("", dependencies=[Depends(require_admin)])
+def create_product(payload: dict, db: Session = Depends(get_db)):
+    product = Product(**payload)
+    product.status = ProductStatus.active
+    product.in_stock = product.stock > 0
+
+    db.add(product)
+    db.commit()
+    db.refresh(product)
+
+    return {"id": str(product.id)}
+
+
+# =====================================================
+# ADMIN: UPDATE PRODUCT
+# =====================================================
+@router.patch("/admin/{product_id}", dependencies=[Depends(require_admin)])
+def update_product(product_id: str, payload: dict, db: Session = Depends(get_db)):
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(404, "Product not found")
+
+    for key, value in payload.items():
+        setattr(product, key, value)
+
+    product.in_stock = product.stock > 0
+    db.commit()
+    return {"message": "Product updated"}
+
+
+# =====================================================
+# ADMIN: BULK UPLOAD
 # =====================================================
 @router.post("/admin/bulk-upload", dependencies=[Depends(require_admin)])
 async def bulk_upload_products(
@@ -126,134 +201,99 @@ async def bulk_upload_products(
     db.commit()
     db.refresh(upload_record)
 
-    try:
-        contents = await file.read()
-        csv_reader = csv.DictReader(io.StringIO(contents.decode("utf-8")))
-        rows = list(csv_reader)
+    contents = await file.read()
+    csv_reader = csv.DictReader(io.StringIO(contents.decode("utf-8")))
+    rows = list(csv_reader)
 
-        upload_record.total_rows = len(rows)
-        db.commit()
+    upload_record.total_rows = len(rows)
+    db.commit()
 
-        successful = 0
-        failed = 0
-        errors = []
+    successful = 0
+    failed = 0
+    errors = []
 
-        for idx, row in enumerate(rows, 1):
-            try:
-                title = row.get("title", "").strip()
-                if not title:
-                    raise ValueError("Missing title")
+    for idx, row in enumerate(rows, 1):
+        try:
+            title = row.get("title", "").strip()
+            if not title:
+                raise ValueError("Missing title")
 
-                parent_asin = row.get("parent_asin", "").strip()
+            parent_asin = row.get("parent_asin", "").strip()
 
-                if parent_asin:
-                    existing = (
-                        db.query(Product)
-                        .filter(Product.parent_asin == parent_asin)
-                        .first()
+            if parent_asin:
+                existing = db.query(Product).filter(
+                    Product.parent_asin == parent_asin
+                ).first()
+                if existing:
+                    raise ValueError("Duplicate parent_asin")
+
+            categories = json.loads(row.get("categories", "[]") or "[]")
+            features = json.loads(row.get("features", "[]") or "[]")
+            details = json.loads(row.get("details", "{}") or "{}")
+
+            product = Product(
+                title=title,
+                short_description=row.get("short_description", title)[:200],
+                description=row.get("description", ""),
+                main_category=row.get("main_category", ""),
+                category=categories[0] if categories else "",
+                categories=categories,
+                price=float(row.get("price", 0) or 0),
+                compare_price=float(row.get("compare_price", 0) or 0),
+                rating=float(row.get("rating", 0) or 0),
+                rating_number=int(row.get("rating_number", 0) or 0),
+                features=features,
+                details=details,
+                store=row.get("store", ""),
+                parent_asin=parent_asin,
+                stock=int(row.get("stock", 10) or 10),
+                in_stock=str(row.get("in_stock", "true")).lower() == "true",
+                status=ProductStatus.active,
+            )
+
+            db.add(product)
+            db.flush()
+
+            image_urls = [
+                url.strip()
+                for url in row.get("image_urls", "").split(",")
+                if url.strip()
+            ]
+
+            for pos, url in enumerate(image_urls[:10]):
+                db.add(
+                    ProductImage(
+                        product_id=product.id,
+                        image_url=url,
+                        position=pos,
                     )
-                    if existing:
-                        raise ValueError(f"Duplicate parent_asin: {parent_asin}")
-
-                categories = json.loads(row.get("categories", "[]") or "[]")
-                features = json.loads(row.get("features", "[]") or "[]")
-                details = json.loads(row.get("details", "{}") or "{}")
-
-                price = float(row.get("price", 0) or 0)
-                compare_price = float(row.get("compare_price", 0) or 0)
-                rating = float(row.get("rating", 0) or 0)
-                rating_number = int(row.get("rating_number", 0) or 0)
-                stock = int(row.get("stock", 10) or 10)
-                in_stock = str(row.get("in_stock", "true")).lower() == "true"
-
-                product = Product(
-                    title=title,
-                    short_description=row.get("short_description", title)[:200],
-                    description=row.get("description", ""),
-                    main_category=row.get("main_category", ""),
-                    category=categories[0] if categories else row.get("main_category", ""),
-                    categories=categories,
-                    price=price,
-                    compare_price=compare_price,
-                    rating=rating,
-                    rating_number=rating_number,
-                    features=features,
-                    details=details,
-                    store=row.get("store", ""),
-                    parent_asin=parent_asin,
-                    stock=stock,
-                    in_stock=in_stock,
-                    status=ProductStatus.active,
                 )
 
-                db.add(product)
-                db.flush()
+            successful += 1
 
-                image_urls_raw = row.get("image_urls", "")
-                image_urls = [
-                    url.strip()
-                    for url in image_urls_raw.split(",")
-                    if url.strip()
-                ]
+        except Exception as e:
+            failed += 1
+            errors.append({"row": idx, "error": str(e)})
 
-                for position, url in enumerate(image_urls[:10]):
-                    db.add(
-                        ProductImage(
-                            product_id=product.id,
-                            image_url=url,
-                            position=position,
-                        )
-                    )
+    upload_record.successful_rows = successful
+    upload_record.failed_rows = failed
+    upload_record.errors = errors[:100]
+    upload_record.status = (
+        BulkUploadStatus.completed
+        if failed == 0
+        else BulkUploadStatus.partial
+        if successful > 0
+        else BulkUploadStatus.failed
+    )
+    upload_record.completed_at = datetime.utcnow()
 
-                successful += 1
+    db.commit()
 
-            except Exception as e:
-                failed += 1
-                errors.append(
-                    {
-                        "row": idx,
-                        "error": str(e),
-                        "title": row.get("title", "Unknown"),
-                    }
-                )
-
-        upload_record.successful_rows = successful
-        upload_record.failed_rows = failed
-        upload_record.errors = errors[:100]
-        upload_record.summary = {
-            "total": len(rows),
-            "successful": successful,
-            "failed": failed,
-            "success_rate": f"{(successful/len(rows)*100):.1f}%"
-            if rows
-            else "0%",
-        }
-
-        upload_record.status = (
-            BulkUploadStatus.completed
-            if failed == 0
-            else BulkUploadStatus.partial
-            if successful > 0
-            else BulkUploadStatus.failed
-        )
-
-        upload_record.completed_at = datetime.utcnow()
-        db.commit()
-
-        return {
-            "upload_id": str(upload_record.id),
-            "total_rows": len(rows),
-            "successful": successful,
-            "failed": failed,
-            "status": upload_record.status,
-            "errors": errors[:10],
-        }
-
-    except Exception as e:
-        upload_record.status = BulkUploadStatus.failed
-        upload_record.errors = [{"error": str(e)}]
-        db.commit()
-        raise HTTPException(500, f"Upload failed: {str(e)}")
+    return {
+        "total": len(rows),
+        "successful": successful,
+        "failed": failed,
+    }
 
 
 # =====================================================
@@ -276,7 +316,6 @@ def list_bulk_uploads(db: Session = Depends(get_db)):
             "total_rows": u.total_rows,
             "successful_rows": u.successful_rows,
             "failed_rows": u.failed_rows,
-            "summary": u.summary,
             "started_at": u.started_at,
             "completed_at": u.completed_at,
         }
