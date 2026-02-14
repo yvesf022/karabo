@@ -137,8 +137,8 @@ class Product(Base):
     store = Column(String, index=True)  # NEW: Store/brand name
 
     status = Column(
-        Enum(ProductStatus, name="product_status"),
-        default=ProductStatus.active,
+        String,
+        default="active",
         nullable=False,
     )
 
