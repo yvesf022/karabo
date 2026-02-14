@@ -28,7 +28,84 @@ router = APIRouter(prefix="/products", tags=["products"])
 
 
 # =====================================================
-# ADMIN: BULK UPLOAD FROM CSV 🚀 (FIXED VERSION)
+# PUBLIC: LIST PRODUCTS
+# =====================================================
+@router.get("")
+def list_products(
+    db: Session = Depends(get_db),
+    search_query: Optional[str] = None,
+    category: Optional[str] = None,
+    main_category: Optional[str] = None,
+    brand: Optional[str] = None,
+    store: Optional[str] = None,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    in_stock: Optional[bool] = None,
+    min_rating: Optional[float] = None,
+    sort: Optional[str] = "featured",
+    page: int = 1,
+    per_page: int = 20,
+):
+    page = max(page, 1)
+    per_page = min(max(per_page, 1), 100)
+
+    query = db.query(Product).filter(Product.status == ProductStatus.active)
+
+    if search_query:
+        query = query.filter(
+            func.to_tsvector("english", Product.title).match(search_query)
+            | func.to_tsvector("english", Product.short_description).match(search_query)
+        )
+
+    if category:
+        query = query.filter(Product.category == category)
+    if main_category:
+        query = query.filter(Product.main_category == main_category)
+    if brand:
+        query = query.filter(Product.brand == brand)
+    if store:
+        query = query.filter(Product.store == store)
+    if min_price is not None:
+        query = query.filter(Product.price >= min_price)
+    if max_price is not None:
+        query = query.filter(Product.price <= max_price)
+    if in_stock is not None:
+        query = query.filter(Product.stock > 0 if in_stock else Product.stock <= 0)
+    if min_rating is not None:
+        query = query.filter(Product.rating >= min_rating)
+
+    query = query.order_by(Product.created_at.desc())
+
+    products = (
+        query.offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    return [
+        {
+            "id": str(p.id),
+            "title": p.title,
+            "short_description": p.short_description,
+            "price": p.price,
+            "brand": p.brand,
+            "store": p.store,
+            "rating": p.rating,
+            "rating_number": p.rating_number,
+            "sales": p.sales,
+            "category": p.category,
+            "main_category": p.main_category,
+            "stock": p.stock,
+            "main_image": p.images[0].image_url if p.images else None,
+            "images": [img.image_url for img in p.images],
+            "created_at": p.created_at,
+        }
+        for p in products
+    ]
+
+
+# =====================================================
+# ADMIN: BULK UPLOAD FROM CSV 🚀
 # =====================================================
 @router.post("/admin/bulk-upload", dependencies=[Depends(require_admin)])
 async def bulk_upload_products(
@@ -69,7 +146,6 @@ async def bulk_upload_products(
 
                 parent_asin = row.get("parent_asin", "").strip()
 
-                # Prevent duplicates
                 if parent_asin:
                     existing = (
                         db.query(Product)
@@ -77,41 +153,28 @@ async def bulk_upload_products(
                         .first()
                     )
                     if existing:
-                        raise ValueError(
-                            f"Duplicate parent_asin: {parent_asin}"
-                        )
+                        raise ValueError(f"Duplicate parent_asin: {parent_asin}")
 
-                # Parse JSON safely
                 categories = json.loads(row.get("categories", "[]") or "[]")
                 features = json.loads(row.get("features", "[]") or "[]")
                 details = json.loads(row.get("details", "{}") or "{}")
 
-                # Parse numeric safely
                 price = float(row.get("price", 0) or 0)
+                compare_price = float(row.get("compare_price", 0) or 0)
                 rating = float(row.get("rating", 0) or 0)
                 rating_number = int(row.get("rating_number", 0) or 0)
                 stock = int(row.get("stock", 10) or 10)
-
-                # Boolean parsing
-                in_stock = (
-                    str(row.get("in_stock", "true")).lower() == "true"
-                )
+                in_stock = str(row.get("in_stock", "true")).lower() == "true"
 
                 product = Product(
                     title=title,
-                    short_description=row.get(
-                        "short_description", title
-                    )[:200],
+                    short_description=row.get("short_description", title)[:200],
                     description=row.get("description", ""),
                     main_category=row.get("main_category", ""),
-                    category=categories[0]
-                    if categories
-                    else row.get("main_category", ""),
+                    category=categories[0] if categories else row.get("main_category", ""),
                     categories=categories,
                     price=price,
-                    compare_price=float(
-                        row.get("compare_price", 0) or 0
-                    ),
+                    compare_price=compare_price,
                     rating=rating,
                     rating_number=rating_number,
                     features=features,
@@ -126,7 +189,6 @@ async def bulk_upload_products(
                 db.add(product)
                 db.flush()
 
-                # 🔥 FIX: Read image_urls column correctly
                 image_urls_raw = row.get("image_urls", "")
                 image_urls = [
                     url.strip()
@@ -176,7 +238,6 @@ async def bulk_upload_products(
         )
 
         upload_record.completed_at = datetime.utcnow()
-
         db.commit()
 
         return {
@@ -193,3 +254,31 @@ async def bulk_upload_products(
         upload_record.errors = [{"error": str(e)}]
         db.commit()
         raise HTTPException(500, f"Upload failed: {str(e)}")
+
+
+# =====================================================
+# ADMIN: LIST BULK UPLOADS
+# =====================================================
+@router.get("/admin/bulk-uploads", dependencies=[Depends(require_admin)])
+def list_bulk_uploads(db: Session = Depends(get_db)):
+    uploads = (
+        db.query(BulkUpload)
+        .order_by(BulkUpload.started_at.desc())
+        .limit(50)
+        .all()
+    )
+
+    return [
+        {
+            "id": str(u.id),
+            "filename": u.filename,
+            "status": u.status,
+            "total_rows": u.total_rows,
+            "successful_rows": u.successful_rows,
+            "failed_rows": u.failed_rows,
+            "summary": u.summary,
+            "started_at": u.started_at,
+            "completed_at": u.completed_at,
+        }
+        for u in uploads
+    ]
