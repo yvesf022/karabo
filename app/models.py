@@ -60,6 +60,13 @@ class ProductStatus(str, enum.Enum):
     discontinued = "discontinued"
 
 
+class BulkUploadStatus(str, enum.Enum):
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+    partial = "partial"
+
+
 # =========================
 # USER
 # =========================
@@ -77,7 +84,6 @@ class User(Base):
 
     avatar_url = Column(String)
 
-    # ✅ FIXED: Added role column
     role = Column(String, default="user", nullable=False)
     is_active = Column(Boolean, default=True)
 
@@ -89,7 +95,6 @@ class User(Base):
         cascade="all, delete-orphan",
     )
 
-    # ✅ ADDED: Property for backward compatibility
     @property
     def is_admin(self) -> bool:
         return self.role == "admin"
@@ -108,20 +113,28 @@ class Product(Base):
     short_description = Column(Text)
     description = Column(Text)
 
-    sku = Column(String)
-    brand = Column(String)
+    sku = Column(String, index=True)
+    brand = Column(String, index=True)
+    parent_asin = Column(String, index=True)  # NEW: For Amazon compatibility
 
     price = Column(Float, nullable=False)
     compare_price = Column(Float)
 
     rating = Column(Float)
+    rating_number = Column(Integer, default=0)  # NEW: Number of ratings
     sales = Column(Integer, default=0)
 
     category = Column(String, index=True)
+    main_category = Column(String, index=True)  # NEW: Main category
+    categories = Column(JSON)  # NEW: All categories
     specs = Column(JSON)
+    details = Column(JSON)  # NEW: Product details
+    features = Column(JSON)  # NEW: Product features
 
     stock = Column(Integer, default=0)
     in_stock = Column(Boolean, default=False)
+
+    store = Column(String, index=True)  # NEW: Store/brand name
 
     status = Column(
         Enum(ProductStatus, name="product_status"),
@@ -147,6 +160,8 @@ class Product(Base):
 Index("idx_products_status", Product.status)
 Index("idx_products_price", Product.price)
 Index("idx_products_created_at", Product.created_at)
+Index("idx_products_rating", Product.rating)
+Index("idx_products_parent_asin", Product.parent_asin)
 
 
 # =========================
@@ -203,7 +218,11 @@ class Order(Base):
         nullable=False,
     )
 
+    shipping_address = Column(JSON)  # NEW: Store shipping details
+    notes = Column(Text)  # NEW: Order notes
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     user = relationship("User", back_populates="orders")
     payments = relationship(
@@ -242,6 +261,10 @@ class Payment(Base):
         nullable=False,
     )
 
+    admin_notes = Column(Text)  # NEW: Admin review notes
+    reviewed_by = Column(UUID(as_uuid=True))  # NEW: Admin who reviewed
+    reviewed_at = Column(DateTime(timezone=True))  # NEW: Review timestamp
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     order = relationship("Order", back_populates="payments")
@@ -278,3 +301,70 @@ class PaymentProof(Base):
     )
 
     payment = relationship("Payment", back_populates="proof")
+
+
+# =========================
+# BANK SETTINGS (NEW)
+# =========================
+
+class BankSettings(Base):
+    """Admin-configured bank account details for manual payments"""
+    __tablename__ = "bank_settings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    bank_name = Column(String, nullable=False)
+    account_name = Column(String, nullable=False)
+    account_number = Column(String, nullable=False)
+    branch = Column(String)
+    swift_code = Column(String)
+
+    mobile_money_provider = Column(String)  # e.g., M-Pesa, MTN
+    mobile_money_number = Column(String)
+    mobile_money_name = Column(String)
+
+    qr_code_url = Column(String)  # Payment QR code image
+    instructions = Column(Text)  # Payment instructions for customers
+
+    is_active = Column(Boolean, default=True)
+    is_primary = Column(Boolean, default=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+Index("idx_bank_settings_active", BankSettings.is_active)
+
+
+# =========================
+# BULK UPLOAD LOG (NEW)
+# =========================
+
+class BulkUpload(Base):
+    """Track CSV bulk upload operations"""
+    __tablename__ = "bulk_uploads"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    filename = Column(String, nullable=False)
+    uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+
+    total_rows = Column(Integer, default=0)
+    successful_rows = Column(Integer, default=0)
+    failed_rows = Column(Integer, default=0)
+
+    status = Column(
+        Enum(BulkUploadStatus, name="bulk_upload_status"),
+        default=BulkUploadStatus.processing,
+        nullable=False,
+    )
+
+    errors = Column(JSON)  # Store error details
+    summary = Column(JSON)  # Upload summary stats
+
+    started_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True))
+
+
+Index("idx_bulk_uploads_status", BulkUpload.status)
+Index("idx_bulk_uploads_started", BulkUpload.started_at)

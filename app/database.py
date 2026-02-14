@@ -74,6 +74,14 @@ def init_database():
         END $$;
         """))
 
+        # NEW: Bulk upload status enum
+        conn.execute(text("""
+        DO $$ BEGIN
+            CREATE TYPE bulk_upload_status AS ENUM ('processing','completed','failed','partial');
+        EXCEPTION WHEN duplicate_object THEN null;
+        END $$;
+        """))
+
     # -------------------------
     # TABLES & INDEXES
     # -------------------------
@@ -81,3 +89,4 @@ def init_database():
     Base.metadata.create_all(bind=engine)
 
     print("✅ Database verified (enums, tables, indexes, FKs)")
+    print("✅ New features: CSV bulk upload, bank settings, enhanced payments")
