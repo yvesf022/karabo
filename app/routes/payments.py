@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session, joinedload
 from datetime import datetime
+from typing import Optional
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_admin

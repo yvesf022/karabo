@@ -24,3 +24,6 @@ requests==2.31.0
 
 # Cloud storage
 cloudinary==1.39.0
+
+# CSV Processing (for bulk upload)
+pandas==2.2.0
