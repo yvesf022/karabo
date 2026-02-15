@@ -47,6 +47,7 @@ def init_database():
     Guarantees on every startup:
     - Required ENUMs exist
     - Missing Product columns are auto-added
+    - Missing Payment columns are auto-added
     - Tables exist
     - Safe for Render (no shell required)
     """
@@ -101,103 +102,35 @@ def init_database():
         # 🔥 AUTO-SYNC PRODUCTS TABLE (SAFE MIGRATION)
         # ==================================================
 
-        # parent_asin
-        conn.execute(text("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='products'
-                AND column_name='parent_asin'
-            ) THEN
-                ALTER TABLE products ADD COLUMN parent_asin VARCHAR;
-            END IF;
-        END $$;
-        """))
+        def add_column_if_missing(table, column, definition):
+            conn.execute(text(f"""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='{table}'
+                    AND column_name='{column}'
+                ) THEN
+                    ALTER TABLE {table} ADD COLUMN {column} {definition};
+                END IF;
+            END $$;
+            """))
 
-        # rating_number
-        conn.execute(text("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='products'
-                AND column_name='rating_number'
-            ) THEN
-                ALTER TABLE products ADD COLUMN rating_number INTEGER DEFAULT 0;
-            END IF;
-        END $$;
-        """))
+        add_column_if_missing("products", "parent_asin", "VARCHAR")
+        add_column_if_missing("products", "rating_number", "INTEGER DEFAULT 0")
+        add_column_if_missing("products", "main_category", "VARCHAR")
+        add_column_if_missing("products", "categories", "JSON")
+        add_column_if_missing("products", "details", "JSON")
+        add_column_if_missing("products", "features", "JSON")
+        add_column_if_missing("products", "store", "VARCHAR")
 
-        # main_category
-        conn.execute(text("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='products'
-                AND column_name='main_category'
-            ) THEN
-                ALTER TABLE products ADD COLUMN main_category VARCHAR;
-            END IF;
-        END $$;
-        """))
+        # ==================================================
+        # 🔥 AUTO-SYNC PAYMENTS TABLE (SAFE MIGRATION)
+        # ==================================================
 
-        # categories
-        conn.execute(text("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='products'
-                AND column_name='categories'
-            ) THEN
-                ALTER TABLE products ADD COLUMN categories JSON;
-            END IF;
-        END $$;
-        """))
-
-        # details
-        conn.execute(text("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='products'
-                AND column_name='details'
-            ) THEN
-                ALTER TABLE products ADD COLUMN details JSON;
-            END IF;
-        END $$;
-        """))
-
-        # features
-        conn.execute(text("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='products'
-                AND column_name='features'
-            ) THEN
-                ALTER TABLE products ADD COLUMN features JSON;
-            END IF;
-        END $$;
-        """))
-
-        # store
-        conn.execute(text("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='products'
-                AND column_name='store'
-            ) THEN
-                ALTER TABLE products ADD COLUMN store VARCHAR;
-            END IF;
-        END $$;
-        """))
+        add_column_if_missing("payments", "admin_notes", "TEXT")
+        add_column_if_missing("payments", "reviewed_by", "UUID")
+        add_column_if_missing("payments", "reviewed_at", "TIMESTAMPTZ")
 
     # ==================================================
     # CREATE TABLES (AFTER ENUMS EXIST)
@@ -207,4 +140,4 @@ def init_database():
     Base.metadata.create_all(bind=engine)
 
     print("✅ Database verified (enums, tables, indexes, FKs)")
-    print("🔥 Products table auto-synced successfully")
+    print("🔥 Products + Payments tables auto-synced successfully")
