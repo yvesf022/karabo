@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session, joinedload
 from datetime import datetime
 from typing import Optional
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_admin
@@ -19,6 +20,39 @@ from app.uploads.service import handle_upload
 
 # 🔥 IMPORTANT: NO /api HERE
 router = APIRouter(prefix="/payments", tags=["payments"])
+
+
+# =====================================================
+# Pydantic Schemas
+# =====================================================
+class BankSettingsCreate(BaseModel):
+    bank_name: str
+    account_name: str
+    account_number: str
+    branch: Optional[str] = None
+    swift_code: Optional[str] = None
+    mobile_money_provider: Optional[str] = None
+    mobile_money_number: Optional[str] = None
+    mobile_money_name: Optional[str] = None
+    qr_code_url: Optional[str] = None
+    instructions: Optional[str] = None
+    is_active: bool = True
+    is_primary: bool = False
+
+
+class BankSettingsUpdate(BaseModel):
+    bank_name: Optional[str] = None
+    account_name: Optional[str] = None
+    account_number: Optional[str] = None
+    branch: Optional[str] = None
+    swift_code: Optional[str] = None
+    mobile_money_provider: Optional[str] = None
+    mobile_money_number: Optional[str] = None
+    mobile_money_name: Optional[str] = None
+    qr_code_url: Optional[str] = None
+    instructions: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_primary: Optional[bool] = None
 
 
 # =====================================================
@@ -241,38 +275,11 @@ def get_bank_settings(db: Session = Depends(get_db)):
 
 
 # =====================================================
-# ADMIN: CREATE OR UPDATE BANK SETTINGS
+# ADMIN: CREATE BANK SETTINGS
 # =====================================================
 @router.post("/admin/bank-settings", dependencies=[Depends(require_admin)])
-def create_bank_settings(
-    bank_name: str,
-    account_name: str,
-    account_number: str,
-    db: Session = Depends(get_db),
-    branch: Optional[str] = None,
-    swift_code: Optional[str] = None,
-    mobile_money_provider: Optional[str] = None,
-    mobile_money_number: Optional[str] = None,
-    mobile_money_name: Optional[str] = None,
-    qr_code_url: Optional[str] = None,
-    instructions: Optional[str] = None,
-    is_active: bool = True,
-    is_primary: bool = False,
-):
-    new_settings = BankSettings(
-        bank_name=bank_name,
-        account_name=account_name,
-        account_number=account_number,
-        branch=branch,
-        swift_code=swift_code,
-        mobile_money_provider=mobile_money_provider,
-        mobile_money_number=mobile_money_number,
-        mobile_money_name=mobile_money_name,
-        qr_code_url=qr_code_url,
-        instructions=instructions,
-        is_active=is_active,
-        is_primary=is_primary,
-    )
+def create_bank_settings(payload: BankSettingsCreate, db: Session = Depends(get_db)):
+    new_settings = BankSettings(**payload.dict())
 
     db.add(new_settings)
     db.commit()
@@ -281,4 +288,25 @@ def create_bank_settings(
     return {
         "id": str(new_settings.id),
         "message": "Bank settings created successfully",
+    }
+
+
+# =====================================================
+# ADMIN: UPDATE BANK SETTINGS
+# =====================================================
+@router.patch("/admin/bank-settings/{settings_id}", dependencies=[Depends(require_admin)])
+def update_bank_settings(settings_id: str, payload: BankSettingsUpdate, db: Session = Depends(get_db)):
+    settings = db.query(BankSettings).filter(BankSettings.id == settings_id).first()
+    if not settings:
+        raise HTTPException(status_code=404, detail="Bank settings not found")
+
+    for field, value in payload.dict(exclude_unset=True).items():
+        setattr(settings, field, value)
+
+    db.commit()
+    db.refresh(settings)
+
+    return {
+        "id": str(settings.id),
+        "message": "Bank settings updated successfully",
     }
