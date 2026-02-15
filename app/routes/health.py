@@ -7,7 +7,7 @@ router = APIRouter(tags=["health"])
 def health_check():
     """
     Keep-alive endpoint for Render free tier.
-    Called every 2 minutes to prevent shutdown.
+    Called every 5 seconds to prevent shutdown.
     """
     return {
         "status": "healthy",
