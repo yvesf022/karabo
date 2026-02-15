@@ -5,7 +5,7 @@ from app.database import init_database, SessionLocal
 from app.admin_auth import ensure_admin_exists
 
 # Routes
-from app.routes import users, products, orders, payments, admin
+from app.routes import users, products, orders, payments, admin, health
 from app.routes import admin_users, password_reset
 from app.auth import router as auth_router
 from app.admin_auth import router as admin_auth_router
@@ -30,6 +30,9 @@ app.add_middleware(
 # ======================================================
 # ROUTES
 # ======================================================
+
+# Health check (keep-alive)
+app.include_router(health.router)
 
 # Auth
 app.include_router(auth_router)          # /api/auth/*
