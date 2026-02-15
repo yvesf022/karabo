@@ -238,3 +238,47 @@ def get_bank_settings(db: Session = Depends(get_db)):
         }
         for s in settings
     ]
+
+
+# =====================================================
+# ADMIN: CREATE OR UPDATE BANK SETTINGS
+# =====================================================
+@router.post("/admin/bank-settings", dependencies=[Depends(require_admin)])
+def create_bank_settings(
+    bank_name: str,
+    account_name: str,
+    account_number: str,
+    db: Session = Depends(get_db),
+    branch: Optional[str] = None,
+    swift_code: Optional[str] = None,
+    mobile_money_provider: Optional[str] = None,
+    mobile_money_number: Optional[str] = None,
+    mobile_money_name: Optional[str] = None,
+    qr_code_url: Optional[str] = None,
+    instructions: Optional[str] = None,
+    is_active: bool = True,
+    is_primary: bool = False,
+):
+    new_settings = BankSettings(
+        bank_name=bank_name,
+        account_name=account_name,
+        account_number=account_number,
+        branch=branch,
+        swift_code=swift_code,
+        mobile_money_provider=mobile_money_provider,
+        mobile_money_number=mobile_money_number,
+        mobile_money_name=mobile_money_name,
+        qr_code_url=qr_code_url,
+        instructions=instructions,
+        is_active=is_active,
+        is_primary=is_primary,
+    )
+
+    db.add(new_settings)
+    db.commit()
+    db.refresh(new_settings)
+
+    return {
+        "id": str(new_settings.id),
+        "message": "Bank settings created successfully",
+    }
