@@ -1,366 +1,11 @@
-import uuid
-import enum
-from sqlalchemy import (
-    Column, String, Text, Integer, Float, Boolean,
-    DateTime, JSON, Enum, ForeignKey, Index,
-)
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
-from app.database import Base
-
-
-# =========================
-# ENUMS
-# =========================
-
-class OrderStatus(str, enum.Enum):
-    pending = "pending"
-    paid = "paid"
-    cancelled = "cancelled"
-    shipped = "shipped"
-    completed = "completed"
-
-class ShippingStatus(str, enum.Enum):
-    pending = "pending"
-    processing = "processing"
-    shipped = "shipped"
-    delivered = "delivered"
-    returned = "returned"
-
-class PaymentStatus(str, enum.Enum):
-    pending = "pending"
-    on_hold = "on_hold"
-    paid = "paid"
-    rejected = "rejected"
-
-class PaymentMethod(str, enum.Enum):
-    card = "card"
-    cash = "cash"
-    mobile_money = "mobile_money"
-    bank_transfer = "bank_transfer"
-
-class ProductStatus(str, enum.Enum):
-    active = "active"
-    inactive = "inactive"
-    discontinued = "discontinued"
-    archived = "archived"    # NEW
-    draft = "draft"          # NEW
-
-class BulkUploadStatus(str, enum.Enum):
-    processing = "processing"
-    completed = "completed"
-    failed = "failed"
-    partial = "partial"
-
-
-# =========================
-# USER
-# =========================
-
-class User(Base):
-    __tablename__ = "users"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String, nullable=False, unique=True, index=True)
-    hashed_password = Column(String, nullable=False)
-    full_name = Column(String)
-    phone = Column(String)
-    avatar_url = Column(String)
-    role = Column(String, default="user", nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    orders = relationship("Order", back_populates="user", cascade="all, delete-orphan")
-
-
-    # Enterprise relationships
-    addresses = relationship("Address", back_populates="user", cascade="all, delete-orphan")
-    cart = relationship("Cart", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    wishlist = relationship("Wishlist", back_populates="user", cascade="all, delete-orphan")
-    reviews = relationship("Review", back_populates="user", cascade="all, delete-orphan")
-    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
-    wallet = relationship("Wallet", back_populates="user", uselist=False, cascade="all, delete-orphan")
-
-    @property
-    def is_admin(self) -> bool:
-        return self.role == "admin"
-
-
-# =========================
-# STORE (MULTI-STORE)  ← NEW
-# =========================
-
-class Store(Base):
-    __tablename__ = "stores"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String, nullable=False, unique=True, index=True)
-    slug = Column(String, nullable=False, unique=True, index=True)
-    description = Column(Text)
-    logo_url = Column(String)
-    banner_url = Column(String)
-    contact_email = Column(String)
-    contact_phone = Column(String)
-    address = Column(Text)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    products = relationship("Product", back_populates="store_ref", foreign_keys="Product.store_id")
-
-Index("idx_stores_slug", Store.slug)
-Index("idx_stores_active", Store.is_active)
-
-
-# =========================
-# PRODUCT
-# =========================
-
-class Product(Base):
-    __tablename__ = "products"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    title = Column(String, nullable=False)
-    short_description = Column(Text)
-    description = Column(Text)
-    sku = Column(String, index=True)
-    brand = Column(String, index=True)
-    parent_asin = Column(String, index=True)
-    price = Column(Float, nullable=False)
-    compare_price = Column(Float)
-    rating = Column(Float)
-    rating_number = Column(Integer, default=0)
-    sales = Column(Integer, default=0)
-    category = Column(String, index=True)
-    main_category = Column(String, index=True)
-    categories = Column(JSON)
-    specs = Column(JSON)
-    details = Column(JSON)
-    features = Column(JSON)
-    stock = Column(Integer, default=0)
-    in_stock = Column(Boolean, default=False)
-    low_stock_threshold = Column(Integer, default=10)   # NEW
-    store = Column(String, index=True)                  # kept for compat
-    store_id = Column(UUID(as_uuid=True), ForeignKey("stores.id", ondelete="SET NULL"), nullable=True, index=True)  # NEW FK
-    status = Column(String, default="active", nullable=False)
-    is_deleted = Column(Boolean, default=False, nullable=False)   # NEW soft-delete
-    deleted_at = Column(DateTime(timezone=True), nullable=True)   # NEW soft-delete
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    images = relationship("ProductImage", back_populates="product", cascade="all, delete-orphan", order_by="ProductImage.position")
-    variants = relationship("ProductVariant", back_populates="product", cascade="all, delete-orphan")  # NEW
-    store_ref = relationship("Store", back_populates="products", foreign_keys=[store_id])
-
-    # Enterprise relationships
-    reviews = relationship("Review", back_populates="product", cascade="all, delete-orphan")
-    questions = relationship("ProductQuestion", back_populates="product", cascade="all, delete-orphan")
-
-Index("idx_products_status", Product.status)
-Index("idx_products_price", Product.price)
-Index("idx_products_created_at", Product.created_at)
-Index("idx_products_rating", Product.rating)
-Index("idx_products_parent_asin", Product.parent_asin)
-Index("idx_products_is_deleted", Product.is_deleted)
-Index("idx_products_store_id", Product.store_id)
-
-
-# =========================
-# PRODUCT IMAGES
-# =========================
-
-class ProductImage(Base):
-    __tablename__ = "product_images"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
-    image_url = Column(String, nullable=False)
-    position = Column(Integer, default=0)
-    is_primary = Column(Boolean, default=False)   # NEW
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    product = relationship("Product", back_populates="images")
-
-
-# =========================
-# PRODUCT VARIANT  ← NEW
-# =========================
-
-class ProductVariant(Base):
-    __tablename__ = "product_variants"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
-    title = Column(String, nullable=False)          # e.g. "Red / XL"
-    sku = Column(String, index=True)
-    attributes = Column(JSON, nullable=False, default=dict)  # {"color":"Red","size":"XL"}
-    price = Column(Float, nullable=False)
-    compare_price = Column(Float)
-    stock = Column(Integer, default=0)
-    in_stock = Column(Boolean, default=True)
-    image_url = Column(String)
-    is_active = Column(Boolean, default=True)
-    is_deleted = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    product = relationship("Product", back_populates="variants")
-    inventory_adjustments = relationship("InventoryAdjustment", back_populates="variant", foreign_keys="InventoryAdjustment.variant_id")
-
-Index("idx_variants_product_id", ProductVariant.product_id)
-Index("idx_variants_sku", ProductVariant.sku)
-Index("idx_variants_active", ProductVariant.is_active)
-
-
-# =========================
-# INVENTORY ADJUSTMENT  ← NEW
-# =========================
-
-class InventoryAdjustment(Base):
-    __tablename__ = "inventory_adjustments"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
-    variant_id = Column(UUID(as_uuid=True), ForeignKey("product_variants.id", ondelete="CASCADE"), nullable=True, index=True)
-    adjustment_type = Column(String, nullable=False, default="manual")  # manual/incoming/sale/return/correction
-    quantity_before = Column(Integer, nullable=False)
-    quantity_change = Column(Integer, nullable=False)   # +add / -remove
-    quantity_after = Column(Integer, nullable=False)
-    note = Column(Text)
-    reference = Column(String)   # PO number, order ID, etc.
-    admin_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    product = relationship("Product", foreign_keys=[product_id])
-    variant = relationship("ProductVariant", back_populates="inventory_adjustments", foreign_keys=[variant_id])
-    admin = relationship("User", foreign_keys=[admin_id])
-
-Index("idx_inventory_adj_product", InventoryAdjustment.product_id)
-Index("idx_inventory_adj_created", InventoryAdjustment.created_at)
-
-
-# =========================
-# AUDIT LOG  ← NEW
-# =========================
-
-class AuditLog(Base):
-    __tablename__ = "audit_logs"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    admin_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    action = Column(String, nullable=False, index=True)        # create/update/delete/archive/etc.
-    entity_type = Column(String, nullable=False, index=True)   # product/order/store/variant
-    entity_id = Column(String, nullable=True, index=True)
-    before = Column(JSON)    # snapshot before change
-    after = Column(JSON)     # snapshot after change
-    meta = Column(JSON)      # IP, user-agent, bulk IDs, etc.
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    admin = relationship("User", foreign_keys=[admin_id])
-
-Index("idx_audit_logs_entity", AuditLog.entity_type, AuditLog.entity_id)
-Index("idx_audit_logs_created", AuditLog.created_at)
-Index("idx_audit_logs_admin", AuditLog.admin_id)
-
-
-# =========================
-# ORDER
-# =========================
-
-class Order(Base):
-    __tablename__ = "orders"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
-    total_amount = Column(Float, nullable=False)
-    status = Column(Enum(OrderStatus, name="order_status"), default=OrderStatus.pending, nullable=False)
-    shipping_status = Column(Enum(ShippingStatus, name="shipping_status"), default=ShippingStatus.pending, nullable=False)
-    shipping_address = Column(JSON)
-    notes = Column(Text)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    user = relationship("User", back_populates="orders")
-    payments = relationship("Payment", back_populates="order", cascade="all, delete-orphan")
-
-    # Enterprise relationships
-    items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
-    returns = relationship("OrderReturn", back_populates="order", cascade="all, delete-orphan")
-    tracking = relationship("OrderTracking", back_populates="order", uselist=False, cascade="all, delete-orphan")
-    admin_notes = relationship("OrderNote", back_populates="order", cascade="all, delete-orphan")
-    is_deleted = Column(Boolean, default=False, nullable=False)
-    deleted_at = Column(DateTime(timezone=True), nullable=True)
-
-
-# =========================
-# PAYMENT
-# =========================
-
-class Payment(Base):
-    __tablename__ = "payments"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True)
-    amount = Column(Float, nullable=False)
-    status = Column(Enum(PaymentStatus, name="payment_status"), default=PaymentStatus.pending, nullable=False)
-    method = Column(Enum(PaymentMethod, name="payment_method"), nullable=False)
-    admin_notes = Column(Text)
-    reviewed_by = Column(UUID(as_uuid=True))
-    reviewed_at = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    order = relationship("Order", back_populates="payments")
-    proof = relationship("PaymentProof", back_populates="payment", uselist=False, cascade="all, delete-orphan")
-
-    # Enterprise relationship
-    status_history = relationship("PaymentStatusHistory", back_populates="payment", cascade="all, delete-orphan")
-
-
-# =========================
-# PAYMENT PROOF
-# =========================
-
-class PaymentProof(Base):
-    __tablename__ = "payment_proofs"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    payment_id = Column(UUID(as_uuid=True), ForeignKey("payments.id", ondelete="CASCADE"), nullable=False, index=True)
-    file_url = Column(String, nullable=False)
-    uploaded_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    payment = relationship("Payment", back_populates="proof")
-
-
-# =========================
-# BANK SETTINGS
-# =========================
-
-class BankSettings(Base):
-    __tablename__ = "bank_settings"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    bank_name = Column(String, nullable=False)
-    account_name = Column(String, nullable=False)
-    account_number = Column(String, nullable=False)
-    branch = Column(String)
-    swift_code = Column(String)
-    mobile_money_provider = Column(String)
-    mobile_money_number = Column(String)
-    mobile_money_name = Column(String)
-    qr_code_url = Column(String)
-    instructions = Column(Text)
-    is_active = Column(Boolean, default=True)
-    is_primary = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-Index("idx_bank_settings_active", BankSettings.is_active)
-
-
-# =========================
-# BULK UPLOAD LOG
-# =========================
-
-class BulkUpload(Base):
-    __tablename__ = "bulk_uploads"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    filename = Column(String, nullable=False)
-    uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    total_rows = Column(Integer, default=0)
-    successful_rows = Column(Integer, default=0)
-    failed_rows = Column(Integer, default=0)
-    status = Column(Enum(BulkUploadStatus, name="bulk_upload_status"), default=BulkUploadStatus.processing, nullable=False)
-    errors = Column(JSON)
-    summary = Column(JSON)
-    started_at = Column(DateTime(timezone=True), server_default=func.now())
-    completed_at = Column(DateTime(timezone=True))
-
-Index("idx_bulk_uploads_status", BulkUpload.status)
-Index("idx_bulk_uploads_started", BulkUpload.started_at)
+# =====================================================
+# ADD THESE MODELS TO YOUR EXISTING models.py
+# =====================================================
 
 # =========================
 # ADDRESS
 # =========================
+
 class Address(Base):
     __tablename__ = "addresses"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -378,11 +23,15 @@ class Address(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     user = relationship("User", back_populates="addresses")
+
 Index("idx_addresses_user_id", Address.user_id)
 Index("idx_addresses_is_default", Address.is_default)
+
+
 # =========================
 # CART
 # =========================
+
 class Cart(Base):
     __tablename__ = "carts"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -391,7 +40,10 @@ class Cart(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     user = relationship("User", back_populates="cart")
     items = relationship("CartItem", back_populates="cart", cascade="all, delete-orphan")
+
 Index("idx_carts_user_id", Cart.user_id)
+
+
 class CartItem(Base):
     __tablename__ = "cart_items"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -405,11 +57,15 @@ class CartItem(Base):
     cart = relationship("Cart", back_populates="items")
     product = relationship("Product")
     variant = relationship("ProductVariant")
+
 Index("idx_cart_items_cart_id", CartItem.cart_id)
 Index("idx_cart_items_product_id", CartItem.product_id)
+
+
 # =========================
 # WISHLIST
 # =========================
+
 class Wishlist(Base):
     __tablename__ = "wishlists"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -418,11 +74,15 @@ class Wishlist(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     user = relationship("User", back_populates="wishlist")
     product = relationship("Product")
+
 Index("idx_wishlists_user_id", Wishlist.user_id)
 Index("idx_wishlists_user_product", Wishlist.user_id, Wishlist.product_id, unique=True)
+
+
 # =========================
 # REVIEWS
 # =========================
+
 class Review(Base):
     __tablename__ = "reviews"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -438,9 +98,12 @@ class Review(Base):
     product = relationship("Product", back_populates="reviews")
     user = relationship("User", back_populates="reviews")
     votes = relationship("ReviewVote", back_populates="review", cascade="all, delete-orphan")
+
 Index("idx_reviews_product_id", Review.product_id)
 Index("idx_reviews_user_id", Review.user_id)
 Index("idx_reviews_rating", Review.rating)
+
+
 class ReviewVote(Base):
     __tablename__ = "review_votes"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -450,10 +113,14 @@ class ReviewVote(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     review = relationship("Review", back_populates="votes")
     user = relationship("User")
+
 Index("idx_review_votes_review_user", ReviewVote.review_id, ReviewVote.user_id, unique=True)
+
+
 # =========================
 # PRODUCT Q&A
 # =========================
+
 class ProductQuestion(Base):
     __tablename__ = "product_questions"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -464,7 +131,10 @@ class ProductQuestion(Base):
     product = relationship("Product", back_populates="questions")
     user = relationship("User")
     answers = relationship("ProductAnswer", back_populates="question", cascade="all, delete-orphan")
+
 Index("idx_product_questions_product_id", ProductQuestion.product_id)
+
+
 class ProductAnswer(Base):
     __tablename__ = "product_answers"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -475,10 +145,14 @@ class ProductAnswer(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     question = relationship("ProductQuestion", back_populates="answers")
     user = relationship("User")
+
 Index("idx_product_answers_question_id", ProductAnswer.question_id)
+
+
 # =========================
 # CATEGORIES & BRANDS
 # =========================
+
 class Category(Base):
     __tablename__ = "categories"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -491,8 +165,11 @@ class Category(Base):
     position = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     parent = relationship("Category", remote_side=[id], backref="subcategories")
+
 Index("idx_categories_slug", Category.slug)
 Index("idx_categories_parent_id", Category.parent_id)
+
+
 class Brand(Base):
     __tablename__ = "brands"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -502,10 +179,14 @@ class Brand(Base):
     logo_url = Column(String)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 Index("idx_brands_slug", Brand.slug)
+
+
 # =========================
 # ORDER ENHANCEMENTS
 # =========================
+
 class OrderItem(Base):
     __tablename__ = "order_items"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -521,7 +202,10 @@ class OrderItem(Base):
     order = relationship("Order", back_populates="items")
     product = relationship("Product")
     variant = relationship("ProductVariant")
+
 Index("idx_order_items_order_id", OrderItem.order_id)
+
+
 class OrderReturn(Base):
     __tablename__ = "order_returns"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -535,8 +219,11 @@ class OrderReturn(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     order = relationship("Order", back_populates="returns")
     user = relationship("User")
+
 Index("idx_order_returns_order_id", OrderReturn.order_id)
 Index("idx_order_returns_status", OrderReturn.status)
+
+
 class OrderTracking(Base):
     __tablename__ = "order_tracking"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -549,7 +236,10 @@ class OrderTracking(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     order = relationship("Order", back_populates="tracking", uselist=False)
+
 Index("idx_order_tracking_order_id", OrderTracking.order_id)
+
+
 class OrderNote(Base):
     __tablename__ = "order_notes"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -560,10 +250,14 @@ class OrderNote(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     order = relationship("Order", back_populates="admin_notes")
     admin = relationship("User")
+
 Index("idx_order_notes_order_id", OrderNote.order_id)
+
+
 # =========================
 # PAYMENT ENHANCEMENTS
 # =========================
+
 class PaymentStatusHistory(Base):
     __tablename__ = "payment_status_history"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -575,10 +269,14 @@ class PaymentStatusHistory(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     payment = relationship("Payment", back_populates="status_history")
     admin = relationship("User")
+
 Index("idx_payment_history_payment_id", PaymentStatusHistory.payment_id)
+
+
 # =========================
 # NOTIFICATIONS
 # =========================
+
 class Notification(Base):
     __tablename__ = "notifications"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -590,12 +288,16 @@ class Notification(Base):
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     user = relationship("User", back_populates="notifications")
+
 Index("idx_notifications_user_id", Notification.user_id)
 Index("idx_notifications_is_read", Notification.is_read)
 Index("idx_notifications_created_at", Notification.created_at)
+
+
 # =========================
 # RECENTLY VIEWED
 # =========================
+
 class RecentlyViewed(Base):
     __tablename__ = "recently_viewed"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -604,12 +306,16 @@ class RecentlyViewed(Base):
     viewed_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     user = relationship("User")
     product = relationship("Product")
+
 Index("idx_recently_viewed_user_id", RecentlyViewed.user_id)
 Index("idx_recently_viewed_viewed_at", RecentlyViewed.viewed_at)
 Index("idx_recently_viewed_user_product", RecentlyViewed.user_id, RecentlyViewed.product_id, unique=True)
+
+
 # =========================
 # COUPONS
 # =========================
+
 class Coupon(Base):
     __tablename__ = "coupons"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -627,9 +333,12 @@ class Coupon(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     usages = relationship("CouponUsage", back_populates="coupon", cascade="all, delete-orphan")
+
 Index("idx_coupons_code", Coupon.code)
 Index("idx_coupons_valid_from", Coupon.valid_from)
 Index("idx_coupons_valid_until", Coupon.valid_until)
+
+
 class CouponUsage(Base):
     __tablename__ = "coupon_usages"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -641,11 +350,15 @@ class CouponUsage(Base):
     coupon = relationship("Coupon", back_populates="usages")
     user = relationship("User")
     order = relationship("Order")
+
 Index("idx_coupon_usages_coupon_id", CouponUsage.coupon_id)
 Index("idx_coupon_usages_user_id", CouponUsage.user_id)
+
+
 # =========================
 # WALLET (OPTIONAL)
 # =========================
+
 class Wallet(Base):
     __tablename__ = "wallets"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -656,7 +369,10 @@ class Wallet(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     user = relationship("User", back_populates="wallet", uselist=False)
     transactions = relationship("WalletTransaction", back_populates="wallet", cascade="all, delete-orphan")
+
 Index("idx_wallets_user_id", Wallet.user_id)
+
+
 class WalletTransaction(Base):
     __tablename__ = "wallet_transactions"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -670,11 +386,15 @@ class WalletTransaction(Base):
     reference = Column(String)  # Order ID, refund ID, etc.
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     wallet = relationship("Wallet", back_populates="transactions")
+
 Index("idx_wallet_transactions_wallet_id", WalletTransaction.wallet_id)
 Index("idx_wallet_transactions_created_at", WalletTransaction.created_at)
+
+
 # =========================
 # USER SESSIONS (For session management)
 # =========================
+
 class UserSession(Base):
     __tablename__ = "user_sessions"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -687,9 +407,12 @@ class UserSession(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     user = relationship("User")
+
 Index("idx_user_sessions_user_id", UserSession.user_id)
 Index("idx_user_sessions_token", UserSession.token)
 Index("idx_user_sessions_expires_at", UserSession.expires_at)
+
+
 # =====================================================
 # UPDATE EXISTING MODELS WITH RELATIONSHIPS
 # =====================================================
@@ -700,6 +423,7 @@ Index("idx_user_sessions_expires_at", UserSession.expires_at)
 # reviews = relationship("Review", back_populates="user", cascade="all, delete-orphan")
 # notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
 # wallet = relationship("Wallet", back_populates="user", uselist=False, cascade="all, delete-orphan")
+
 # Add these to your existing Order model:
 # items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
 # returns = relationship("OrderReturn", back_populates="order", cascade="all, delete-orphan")
@@ -707,8 +431,10 @@ Index("idx_user_sessions_expires_at", UserSession.expires_at)
 # admin_notes = relationship("OrderNote", back_populates="order", cascade="all, delete-orphan")
 # is_deleted = Column(Boolean, default=False, nullable=False)
 # deleted_at = Column(DateTime(timezone=True), nullable=True)
+
 # Add these to your existing Payment model:
 # status_history = relationship("PaymentStatusHistory", back_populates="payment", cascade="all, delete-orphan")
+
 # Add these to your existing Product model:
 # reviews = relationship("Review", back_populates="product", cascade="all, delete-orphan")
 # questions = relationship("ProductQuestion", back_populates="product", cascade="all, delete-orphan")

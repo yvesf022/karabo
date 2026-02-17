@@ -58,6 +58,7 @@ def init_database():
         # 🔥 CREATE REQUIRED ENUMS (SAFE)
         # ==================================================
 
+        # Existing ENUMs
         conn.execute(text("""
         DO $$ BEGIN
             CREATE TYPE order_status AS ENUM
@@ -183,7 +184,7 @@ def init_database():
         add_column_if_missing("orders", "deleted_at",       "TIMESTAMPTZ")
 
         # ==================================================
-        # 🔥 CREATE INDEXES (SAFE - ENTERPRISE ENHANCED)
+        # 🔥 CREATE INDEXES (SAFE)
         # ==================================================
 
         indexes = [
@@ -193,7 +194,7 @@ def init_database():
             ("idx_stores_slug",          "stores",                "slug"),
             ("idx_stores_active",        "stores",                "is_active"),
             
-            # Enterprise feature indexes (created only if tables exist)
+            # New indexes for enterprise features
             ("idx_addresses_user_id",           "addresses",            "user_id"),
             ("idx_addresses_is_default",        "addresses",            "is_default"),
             ("idx_carts_user_id",               "carts",                "user_id"),
@@ -223,7 +224,6 @@ def init_database():
                     SELECT 1 FROM pg_indexes
                     WHERE indexname = '{idx_name}'
                 ) THEN
-                    -- Only create index if table and column exist
                     IF EXISTS (
                         SELECT 1 FROM information_schema.tables 
                         WHERE table_name = '{table}'
