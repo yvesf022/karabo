@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session, joinedload
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel
 
@@ -53,6 +53,12 @@ class BankSettingsUpdate(BaseModel):
     instructions: Optional[str] = None
     is_active: Optional[bool] = None
     is_primary: Optional[bool] = None
+
+
+# ✅ NEW SCHEMA: Payment Review
+class PaymentReviewPayload(BaseModel):
+    status: str  # "paid" | "rejected"
+    admin_notes: Optional[str] = None
 
 
 # =====================================================
@@ -201,6 +207,85 @@ def upload_payment_proof(
 
 
 # =====================================================
+# USER: GET MY PAYMENTS
+# =====================================================
+@router.get("/my")
+def get_my_payments(
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    payments = (
+        db.query(Payment)
+        .join(Order, Payment.order_id == Order.id)
+        .options(joinedload(Payment.proof))
+        .filter(Order.user_id == user.id)
+        .order_by(Payment.created_at.desc())
+        .all()
+    )
+
+    return [
+        {
+            "id": str(p.id),
+            "order_id": str(p.order_id),
+            "amount": p.amount,
+            "status": p.status,
+            "method": p.method,
+            "proof": (
+                {
+                    "id": str(p.proof.id),
+                    "file_url": p.proof.file_url,
+                    "uploaded_at": p.proof.uploaded_at,
+                }
+                if p.proof
+                else None
+            ),
+            "created_at": p.created_at,
+        }
+        for p in payments
+    ]
+
+
+# =====================================================
+# USER: GET SINGLE PAYMENT DETAIL
+# =====================================================
+@router.get("/{payment_id}")
+def get_payment_detail(
+    payment_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    payment = (
+        db.query(Payment)
+        .join(Order, Payment.order_id == Order.id)
+        .options(joinedload(Payment.proof))
+        .filter(Payment.id == payment_id, Order.user_id == user.id)
+        .first()
+    )
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    return {
+        "id": str(payment.id),
+        "order_id": str(payment.order_id),
+        "amount": payment.amount,
+        "status": payment.status,
+        "method": payment.method,
+        "proof": (
+            {
+                "id": str(payment.proof.id),
+                "file_url": payment.proof.file_url,
+                "uploaded_at": payment.proof.uploaded_at,
+            }
+            if payment.proof
+            else None
+        ),
+        "admin_notes": payment.admin_notes,
+        "reviewed_at": payment.reviewed_at,
+        "created_at": payment.created_at,
+    }
+
+
+# =====================================================
 # ADMIN: LIST PAYMENTS
 # =====================================================
 @router.get("/admin", dependencies=[Depends(require_admin)])
@@ -245,6 +330,111 @@ def admin_list_payments(
         }
         for p in payments
     ]
+
+
+# =====================================================
+# ✅ NEW — ADMIN: REVIEW PAYMENT (approve / reject)
+# POST /api/payments/admin/{payment_id}/review
+# =====================================================
+@router.post("/admin/{payment_id}/review", dependencies=[Depends(require_admin)])
+def review_payment(
+    payment_id: str,
+    payload: PaymentReviewPayload,
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    """
+    Admin approves or rejects a payment proof.
+    - status="paid"     → marks payment paid, order paid
+    - status="rejected" → marks payment rejected, order stays pending
+    """
+
+    if payload.status not in ("paid", "rejected"):
+        raise HTTPException(
+            status_code=400,
+            detail="status must be 'paid' or 'rejected'",
+        )
+
+    payment = (
+        db.query(Payment)
+        .options(joinedload(Payment.order))
+        .filter(Payment.id == payment_id)
+        .first()
+    )
+
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    if payment.status not in (PaymentStatus.on_hold, PaymentStatus.pending):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot review a payment with status '{payment.status}'",
+        )
+
+    payment.status = PaymentStatus(payload.status)
+    payment.admin_notes = payload.admin_notes
+    payment.reviewed_by = admin.id
+    payment.reviewed_at = datetime.now(timezone.utc)
+
+    # Sync order status when payment is approved
+    if payload.status == "paid" and payment.order:
+        payment.order.status = OrderStatus.paid
+
+    db.commit()
+    db.refresh(payment)
+
+    return {
+        "message": f"Payment marked as '{payload.status}'",
+        "payment_id": str(payment.id),
+        "payment_status": payment.status,
+        "order_status": payment.order.status if payment.order else None,
+        "reviewed_by": str(payment.reviewed_by),
+        "reviewed_at": payment.reviewed_at,
+    }
+
+
+# =====================================================
+# ADMIN: GET SINGLE PAYMENT DETAIL
+# =====================================================
+@router.get("/admin/{payment_id}", dependencies=[Depends(require_admin)])
+def admin_get_payment_detail(
+    payment_id: str,
+    db: Session = Depends(get_db),
+):
+    payment = (
+        db.query(Payment)
+        .options(joinedload(Payment.proof), joinedload(Payment.order))
+        .filter(Payment.id == payment_id)
+        .first()
+    )
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    return {
+        "id": str(payment.id),
+        "order_id": str(payment.order_id),
+        "amount": payment.amount,
+        "status": payment.status,
+        "method": payment.method,
+        "proof": (
+            {
+                "id": str(payment.proof.id),
+                "file_url": payment.proof.file_url,
+                "uploaded_at": payment.proof.uploaded_at,
+            }
+            if payment.proof
+            else None
+        ),
+        "admin_notes": payment.admin_notes,
+        "reviewed_by": str(payment.reviewed_by) if payment.reviewed_by else None,
+        "reviewed_at": payment.reviewed_at,
+        "created_at": payment.created_at,
+        "order": {
+            "id": str(payment.order.id),
+            "status": payment.order.status,
+            "total_amount": payment.order.total_amount,
+        } if payment.order else None,
+    }
 
 
 # =====================================================

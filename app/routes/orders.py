@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_admin
@@ -7,10 +7,10 @@ from app.models import (
     Order,
     OrderStatus,
     ShippingStatus,
+    Payment,
     User,
 )
 
-# ✅ FIXED: Changed prefix from /api/orders to /orders (since /api is added in main.py)
 router = APIRouter(prefix="/orders", tags=["orders"])
 
 
@@ -33,6 +33,8 @@ def create_order(
         total_amount=total,
         status=OrderStatus.pending,
         shipping_status=ShippingStatus.pending,
+        shipping_address=payload.get("shipping_address"),
+        notes=payload.get("notes"),
     )
 
     db.add(order)
@@ -66,7 +68,10 @@ def my_orders(
             "total_amount": o.total_amount,
             "status": o.status,
             "shipping_status": o.shipping_status,
+            "shipping_address": o.shipping_address,
+            "notes": o.notes,
             "created_at": o.created_at,
+            "updated_at": o.updated_at,
         }
         for o in orders
     ]
@@ -79,16 +84,29 @@ def my_orders(
 def admin_orders(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
+    status_filter: str = None,
 ):
-    orders = db.query(Order).order_by(Order.created_at.desc()).all()
+    query = db.query(Order).order_by(Order.created_at.desc())
+
+    if status_filter:
+        try:
+            query = query.filter(Order.status == OrderStatus(status_filter))
+        except ValueError:
+            pass  # ignore invalid filter, return all
+
+    orders = query.all()
 
     return [
         {
             "id": str(o.id),
+            "user_id": str(o.user_id),
             "total_amount": o.total_amount,
             "status": o.status,
             "shipping_status": o.shipping_status,
+            "shipping_address": o.shipping_address,
+            "notes": o.notes,
             "created_at": o.created_at,
+            "updated_at": o.updated_at,
         }
         for o in orders
     ]
@@ -127,4 +145,112 @@ def update_shipping(
         "message": "Shipping updated",
         "order_id": str(order.id),
         "shipping_status": order.shipping_status,
+    }
+
+
+# =====================================================
+# ✅ NEW — USER: GET SINGLE ORDER DETAIL
+# GET /api/orders/{order_id}
+# =====================================================
+@router.get("/{order_id}")
+def get_my_order_detail(
+    order_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    order = (
+        db.query(Order)
+        .options(joinedload(Order.payments).joinedload(Payment.proof))
+        .filter(Order.id == order_id, Order.user_id == user.id)
+        .first()
+    )
+
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    return {
+        "id": str(order.id),
+        "user_id": str(order.user_id),
+        "total_amount": order.total_amount,
+        "status": order.status,
+        "shipping_status": order.shipping_status,
+        "shipping_address": order.shipping_address,
+        "notes": order.notes,
+        "created_at": order.created_at,
+        "updated_at": order.updated_at,
+        "payments": [
+            {
+                "id": str(p.id),
+                "amount": p.amount,
+                "status": p.status,
+                "method": p.method,
+                "proof": (
+                    {
+                        "id": str(p.proof.id),
+                        "file_url": p.proof.file_url,
+                        "uploaded_at": p.proof.uploaded_at,
+                    }
+                    if p.proof
+                    else None
+                ),
+                "reviewed_at": p.reviewed_at,
+                "created_at": p.created_at,
+            }
+            for p in order.payments
+        ],
+    }
+
+
+# =====================================================
+# ✅ NEW — ADMIN: GET SINGLE ORDER DETAIL
+# GET /api/orders/admin/{order_id}
+# =====================================================
+@router.get("/admin/{order_id}")
+def admin_get_order_detail(
+    order_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    order = (
+        db.query(Order)
+        .options(joinedload(Order.payments).joinedload(Payment.proof))
+        .filter(Order.id == order_id)
+        .first()
+    )
+
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    return {
+        "id": str(order.id),
+        "user_id": str(order.user_id),
+        "total_amount": order.total_amount,
+        "status": order.status,
+        "shipping_status": order.shipping_status,
+        "shipping_address": order.shipping_address,
+        "notes": order.notes,
+        "created_at": order.created_at,
+        "updated_at": order.updated_at,
+        "payments": [
+            {
+                "id": str(p.id),
+                "amount": p.amount,
+                "status": p.status,
+                "method": p.method,
+                "proof": (
+                    {
+                        "id": str(p.proof.id),
+                        "file_url": p.proof.file_url,
+                        "uploaded_at": p.proof.uploaded_at,
+                    }
+                    if p.proof
+                    else None
+                ),
+                "admin_notes": p.admin_notes,
+                "reviewed_by": str(p.reviewed_by) if p.reviewed_by else None,
+                "reviewed_at": p.reviewed_at,
+                "created_at": p.created_at,
+            }
+            for p in order.payments
+        ],
     }
