@@ -156,6 +156,20 @@ def startup():
             ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE
         """))
 
+        # -------------------------------------------------
+        # 🔥 BACKFILL NULL is_deleted → FALSE (Critical Fix)
+        # Rows inserted before the column existed have NULL,
+        # which breaks  is_deleted == False  filters in PostgreSQL.
+        # -------------------------------------------------
+
+        db.execute(text("""
+            UPDATE products SET is_deleted = FALSE WHERE is_deleted IS NULL
+        """))
+
+        db.execute(text("""
+            UPDATE orders SET is_deleted = FALSE WHERE is_deleted IS NULL
+        """))
+
         db.commit()
 
         print("✅ Database schema verified successfully")

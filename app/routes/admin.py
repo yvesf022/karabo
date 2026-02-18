@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from typing import Optional
 from datetime import datetime, timedelta
+import re
 
 from app.database import get_db
 from app.dependencies import require_admin
@@ -22,15 +23,15 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 @router.get("/dashboard")
 def admin_dashboard(db: Session = Depends(get_db), admin=Depends(require_admin)):
-    total_products = db.query(Product).filter(Product.is_deleted == False).count()
-    active_products = db.query(Product).filter(Product.status == "active", Product.is_deleted == False).count()
+    total_products = db.query(Product).filter(Product.is_deleted.isnot(True)).count()
+    active_products = db.query(Product).filter(Product.status == "active", Product.is_deleted.isnot(True)).count()
     total_orders = db.query(Order).count()
     paid_orders = db.query(Order).filter(Order.status == OrderStatus.paid).count()
     total_revenue = db.query(func.sum(Order.total_amount)).filter(Order.status == OrderStatus.paid).scalar() or 0
     low_stock = db.query(Product).filter(
-        Product.stock > 0, Product.stock <= Product.low_stock_threshold, Product.is_deleted == False
+        Product.stock > 0, Product.stock <= Product.low_stock_threshold, Product.is_deleted.isnot(True)
     ).count()
-    out_of_stock = db.query(Product).filter(Product.stock == 0, Product.is_deleted == False).count()
+    out_of_stock = db.query(Product).filter(Product.stock == 0, Product.is_deleted.isnot(True)).count()
     total_users = db.query(User).filter(User.role == "user").count()
 
     return {
@@ -61,7 +62,7 @@ def analytics_overview(
     ).scalar() or 0
     orders_count = db.query(Order).filter(Order.created_at >= since).count()
     paid_count = db.query(Order).filter(Order.status == OrderStatus.paid, Order.created_at >= since).count()
-    new_products = db.query(Product).filter(Product.created_at >= since, Product.is_deleted == False).count()
+    new_products = db.query(Product).filter(Product.created_at >= since, Product.is_deleted.isnot(True)).count()
     new_users = db.query(User).filter(User.created_at >= since, User.role == "user").count()
     return {
         "period_days": days,
@@ -110,7 +111,7 @@ def analytics_top_products(
     limit: int = Query(10, ge=1, le=50),
 ):
     products = db.query(Product).filter(
-        Product.is_deleted == False
+        Product.is_deleted.isnot(True)
     ).order_by(Product.sales.desc()).limit(limit).all()
     return [
         {
@@ -135,7 +136,7 @@ def analytics_dead_stock(
 ):
     """Products with stock > 0 but zero sales or very old."""
     products = db.query(Product).filter(
-        Product.is_deleted == False,
+        Product.is_deleted.isnot(True),
         Product.stock > 0,
         Product.sales == 0,
     ).order_by(Product.created_at.asc()).limit(limit).all()
@@ -161,7 +162,7 @@ def analytics_stock_turnover(
 ):
     """Products ranked by sales-to-stock ratio (turnover)."""
     products = db.query(Product).filter(
-        Product.is_deleted == False, Product.stock > 0
+        Product.is_deleted.isnot(True), Product.stock > 0
     ).all()
     data = []
     for p in products:
@@ -258,7 +259,7 @@ def inventory_low_stock(db: Session = Depends(get_db), admin=Depends(require_adm
     products = db.query(Product).filter(
         Product.stock > 0,
         Product.stock <= Product.low_stock_threshold,
-        Product.is_deleted == False,
+        Product.is_deleted.isnot(True),
     ).order_by(Product.stock.asc()).all()
     return [
         {"id": str(p.id), "title": p.title, "stock": p.stock, "threshold": p.low_stock_threshold, "price": p.price}
@@ -270,7 +271,7 @@ def inventory_low_stock(db: Session = Depends(get_db), admin=Depends(require_adm
 def inventory_out_of_stock(db: Session = Depends(get_db), admin=Depends(require_admin)):
     products = db.query(Product).filter(
         Product.stock == 0,
-        Product.is_deleted == False,
+        Product.is_deleted.isnot(True),
     ).order_by(Product.updated_at.desc()).all()
     return [
         {"id": str(p.id), "title": p.title, "stock": 0, "price": p.price, "status": p.status}
@@ -280,13 +281,13 @@ def inventory_out_of_stock(db: Session = Depends(get_db), admin=Depends(require_
 
 @router.get("/inventory/report")
 def inventory_report(db: Session = Depends(get_db), admin=Depends(require_admin)):
-    total = db.query(Product).filter(Product.is_deleted == False).count()
-    in_stock = db.query(Product).filter(Product.stock > 0, Product.is_deleted == False).count()
-    out_of_stock = db.query(Product).filter(Product.stock == 0, Product.is_deleted == False).count()
+    total = db.query(Product).filter(Product.is_deleted.isnot(True)).count()
+    in_stock = db.query(Product).filter(Product.stock > 0, Product.is_deleted.isnot(True)).count()
+    out_of_stock = db.query(Product).filter(Product.stock == 0, Product.is_deleted.isnot(True)).count()
     low_stock = db.query(Product).filter(
-        Product.stock > 0, Product.stock <= Product.low_stock_threshold, Product.is_deleted == False
+        Product.stock > 0, Product.stock <= Product.low_stock_threshold, Product.is_deleted.isnot(True)
     ).count()
-    total_value = db.query(func.sum(Product.stock * Product.price)).filter(Product.is_deleted == False).scalar() or 0
+    total_value = db.query(func.sum(Product.stock * Product.price)).filter(Product.is_deleted.isnot(True)).scalar() or 0
     return {
         "total_products": total,
         "in_stock": in_stock,
@@ -301,7 +302,7 @@ def inventory_adjust(payload: dict, db: Session = Depends(get_db), admin=Depends
     product_id = payload.get("product_id")
     if not product_id:
         raise HTTPException(400, "product_id required")
-    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted == False).first()
+    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted.isnot(True)).first()
     if not product:
         raise HTTPException(404, "Product not found")
     change = int(payload.get("quantity_change", 0))
@@ -411,7 +412,7 @@ def delete_store(store_id: str, db: Session = Depends(get_db), admin=Depends(req
     store = db.query(Store).filter(Store.id == store_id).first()
     if not store:
         raise HTTPException(404, "Store not found")
-    product_count = db.query(Product).filter(Product.store_id == store_id, Product.is_deleted == False).count()
+    product_count = db.query(Product).filter(Product.store_id == store_id, Product.is_deleted.isnot(True)).count()
     if product_count > 0:
         raise HTTPException(400, f"Cannot delete store with {product_count} active products. Reassign them first.")
     db.delete(store)

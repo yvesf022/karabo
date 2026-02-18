@@ -100,7 +100,7 @@ def list_products(
 ):
     query = db.query(Product).filter(
         Product.status == "active",
-        Product.is_deleted == False,
+        Product.is_deleted.isnot(True),
     )
 
     if search:
@@ -174,7 +174,7 @@ def get_product(product_id: str, db: Session = Depends(get_db)):
     product = db.query(Product).filter(
         Product.id == product_id,
         Product.status == "active",
-        Product.is_deleted == False,
+        Product.is_deleted.isnot(True),
     ).first()
     if not product:
         raise HTTPException(404, "Product not found")
@@ -202,7 +202,7 @@ def admin_list_products(
 ):
     query = db.query(Product)
     if not include_deleted:
-        query = query.filter(Product.is_deleted == False)
+        query = query.filter(Product.is_deleted.isnot(True))
 
     if search:
         q = f"%{search}%"
@@ -269,7 +269,7 @@ def create_product(payload: dict, db: Session = Depends(get_db), admin=Depends(r
 
 @router.patch("/admin/{product_id}", dependencies=[Depends(require_admin)])
 def update_product(product_id: str, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
-    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted == False).first()
+    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted.isnot(True)).first()
     if not product:
         raise HTTPException(404, "Product not found")
     before = _product_snapshot(product)
@@ -288,7 +288,7 @@ def update_product(product_id: str, payload: dict, db: Session = Depends(get_db)
 
 @router.delete("/{product_id}", dependencies=[Depends(require_admin)])
 def soft_delete_product(product_id: str, db: Session = Depends(get_db), admin=Depends(require_admin)):
-    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted == False).first()
+    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted.isnot(True)).first()
     if not product:
         raise HTTPException(404, "Product not found")
     before = _product_snapshot(product)
@@ -313,7 +313,7 @@ def hard_delete_product(product_id: str, db: Session = Depends(get_db), admin=De
 
 @router.post("/{product_id}/duplicate", dependencies=[Depends(require_admin)])
 def duplicate_product(product_id: str, db: Session = Depends(get_db), admin=Depends(require_admin)):
-    original = db.query(Product).filter(Product.id == product_id, Product.is_deleted == False).first()
+    original = db.query(Product).filter(Product.id == product_id, Product.is_deleted.isnot(True)).first()
     if not original:
         raise HTTPException(404, "Product not found")
 
@@ -356,7 +356,7 @@ def duplicate_product(product_id: str, db: Session = Depends(get_db), admin=Depe
 
 @router.post("/{product_id}/archive", dependencies=[Depends(require_admin)])
 def archive_product(product_id: str, db: Session = Depends(get_db), admin=Depends(require_admin)):
-    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted == False).first()
+    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted.isnot(True)).first()
     if not product:
         raise HTTPException(404, "Product not found")
     before = _product_snapshot(product)
@@ -382,7 +382,7 @@ def restore_product(product_id: str, db: Session = Depends(get_db), admin=Depend
 
 @router.post("/{product_id}/publish", dependencies=[Depends(require_admin)])
 def publish_product(product_id: str, db: Session = Depends(get_db), admin=Depends(require_admin)):
-    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted == False).first()
+    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted.isnot(True)).first()
     if not product:
         raise HTTPException(404, "Product not found")
     before = _product_snapshot(product)
@@ -394,7 +394,7 @@ def publish_product(product_id: str, db: Session = Depends(get_db), admin=Depend
 
 @router.post("/{product_id}/draft", dependencies=[Depends(require_admin)])
 def draft_product(product_id: str, db: Session = Depends(get_db), admin=Depends(require_admin)):
-    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted == False).first()
+    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted.isnot(True)).first()
     if not product:
         raise HTTPException(404, "Product not found")
     before = _product_snapshot(product)
@@ -419,7 +419,7 @@ def bulk_mutate(payload: dict, db: Session = Depends(get_db), admin=Depends(requ
     if not ids or not action:
         raise HTTPException(400, "ids and action are required")
 
-    products = db.query(Product).filter(Product.id.in_(ids), Product.is_deleted == False).all()
+    products = db.query(Product).filter(Product.id.in_(ids), Product.is_deleted.isnot(True)).all()
     if not products:
         raise HTTPException(404, "No products found")
 
@@ -457,7 +457,7 @@ def bulk_delete(payload: dict, db: Session = Depends(get_db), admin=Depends(requ
     ids = payload.get("ids", [])
     if not ids:
         raise HTTPException(400, "ids required")
-    products = db.query(Product).filter(Product.id.in_(ids), Product.is_deleted == False).all()
+    products = db.query(Product).filter(Product.id.in_(ids), Product.is_deleted.isnot(True)).all()
     for p in products:
         p.is_deleted = True
         p.deleted_at = datetime.utcnow()
@@ -472,7 +472,7 @@ def empty_store(payload: dict, db: Session = Depends(get_db), admin=Depends(requ
     """Soft-delete ALL products. Requires confirm:true in payload."""
     if not payload.get("confirm"):
         raise HTTPException(400, "Send confirm:true to proceed")
-    count = db.query(Product).filter(Product.is_deleted == False).update(
+    count = db.query(Product).filter(Product.is_deleted.isnot(True)).update(
         {"is_deleted": True, "deleted_at": datetime.utcnow(), "status": "inactive"},
         synchronize_session=False,
     )
@@ -613,7 +613,7 @@ def export_products(
     """Export products to CSV. Streams the file."""
     query = db.query(Product)
     if not include_deleted:
-        query = query.filter(Product.is_deleted == False)
+        query = query.filter(Product.is_deleted.isnot(True))
     if status:
         query = query.filter(Product.status == status)
     if store:
@@ -677,7 +677,7 @@ def list_variants(product_id: str, db: Session = Depends(get_db)):
 
 @router.post("/{product_id}/variants", dependencies=[Depends(require_admin)])
 def create_variant(product_id: str, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
-    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted == False).first()
+    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted.isnot(True)).first()
     if not product:
         raise HTTPException(404, "Product not found")
     variant = ProductVariant(
@@ -853,7 +853,7 @@ def product_analytics(product_id: str, db: Session = Depends(get_db)):
 
 @router.patch("/{product_id}/inventory", dependencies=[Depends(require_admin)])
 def update_product_inventory(product_id: str, payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
-    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted == False).first()
+    product = db.query(Product).filter(Product.id == product_id, Product.is_deleted.isnot(True)).first()
     if not product:
         raise HTTPException(404, "Product not found")
     new_stock = int(payload.get("stock", product.stock))
