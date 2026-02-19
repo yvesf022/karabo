@@ -21,12 +21,14 @@ FILE_TYPES = {
 
 ALLOWED_TYPES = IMAGE_TYPES | FILE_TYPES
 
-MAX_FILE_SIZE = 15 * 1024 * 1024  # 15MB (covers products + proofs)
+MAX_FILE_SIZE = 15 * 1024 * 1024  # 15MB
 
+# ✅ FIXED: "payment_proofs" was missing — caused 400 on resubmit-proof endpoint
 ALLOWED_FOLDERS = {
     "avatars",
     "products",
     "payments",
+    "payment_proofs",
 }
 
 # ======================================================
@@ -40,40 +42,33 @@ def handle_upload(
 ) -> str:
     """
     Centralized upload handler.
-
     - Validates file type & size
     - Enforces allowed folders
     - Uploads to Cloudinary
-    - Returns secure URL (stored in DB)
+    - Returns secure URL
     """
 
-    # -------------------------
-    # Validate folder
-    # -------------------------
     if folder not in ALLOWED_FOLDERS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid upload destination",
+            detail=f"Invalid upload destination: '{folder}'",
         )
 
-    # -------------------------
-    # Validate file
-    # -------------------------
     if not file:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No file uploaded",
         )
 
-    if file.content_type not in ALLOWED_TYPES:
+    content_type = (file.content_type or "").lower().strip()
+
+    if content_type not in ALLOWED_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unsupported file type",
+            detail=f"Unsupported file type: '{content_type}'. Allowed: images (JPEG, PNG, WebP, GIF) and PDF.",
         )
 
-    # -------------------------
-    # Validate file size (stream-safe)
-    # -------------------------
+    # Stream-safe size check
     try:
         file.file.seek(0, 2)
         size = file.file.tell()
@@ -93,19 +88,14 @@ def handle_upload(
     if size > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File size exceeds allowed limit (15MB)",
+            detail=f"File size {round(size / 1024 / 1024, 1)}MB exceeds 15MB limit",
         )
 
-    # -------------------------
-    # Generate Cloudinary public_id
-    # -------------------------
+    # Unique public_id per upload — prevents Cloudinary cache collisions
     public_id = f"{folder}_{owner_id}_{uuid.uuid4().hex}"
 
-    # -------------------------
-    # Upload to Cloudinary
-    # -------------------------
     try:
-        if file.content_type in IMAGE_TYPES:
+        if content_type in IMAGE_TYPES:
             url = upload_image(
                 file=file.file,
                 folder=folder,
@@ -118,16 +108,18 @@ def handle_upload(
                 folder=folder,
                 public_id=public_id,
             )
-    except Exception:
+    except HTTPException:
+        raise  # re-raise known HTTP exceptions as-is
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upload file",
+            detail=f"Upload failed: {str(e)}",
         )
 
     if not url:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Upload returned no URL",
+            detail="Upload succeeded but returned no URL",
         )
 
     return url

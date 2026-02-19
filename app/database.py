@@ -168,9 +168,12 @@ def init_database():
         # 🔥 AUTO-SYNC PAYMENTS TABLE
         # ==================================================
 
-        add_column_if_missing("payments", "admin_notes",  "TEXT")
-        add_column_if_missing("payments", "reviewed_by",  "UUID")
-        add_column_if_missing("payments", "reviewed_at",  "TIMESTAMPTZ")
+        add_column_if_missing("payments", "admin_notes",      "TEXT")
+        add_column_if_missing("payments", "reviewed_by",      "UUID")
+        add_column_if_missing("payments", "reviewed_at",      "TIMESTAMPTZ")
+        add_column_if_missing("payments", "reference_number", "VARCHAR")
+        add_column_if_missing("payments", "updated_at",       "TIMESTAMPTZ")
+        add_column_if_missing("payments", "expires_at",       "TIMESTAMPTZ")
 
         # ==================================================
         # 🔥 AUTO-SYNC ORDERS TABLE
@@ -213,6 +216,7 @@ def init_database():
             ("idx_order_returns_order_id",      "order_returns",        "order_id"),
             ("idx_order_notes_order_id",        "order_notes",          "order_id"),
             ("idx_payment_history_payment_id",  "payment_status_history", "payment_id"),
+            ("idx_payments_reference_number",     "payments",               "reference_number"),
         ]
 
         for idx_name, table, column in indexes:
