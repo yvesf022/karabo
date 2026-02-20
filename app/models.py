@@ -312,6 +312,32 @@ class PaymentProof(Base):
     payment_id = Column(UUID(as_uuid=True), ForeignKey("payments.id", ondelete="CASCADE"), nullable=False, index=True)
     file_url = Column(String, nullable=False)
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+# =========================
+# BANK SETTINGS
+# =========================
+
+class BankSettings(Base):
+    __tablename__ = "bank_settings"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    bank_name = Column(String, nullable=False)
+    account_name = Column(String, nullable=False)
+    account_number = Column(String, nullable=False)
+    branch = Column(String)
+    swift_code = Column(String)
+    mobile_money_provider = Column(String)
+    mobile_money_number = Column(String)
+    mobile_money_name = Column(String)
+    qr_code_url = Column(String)
+    instructions = Column(Text)
+    is_active = Column(Boolean, default=True, nullable=False)
+    is_primary = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+Index("idx_bank_settings_active", BankSettings.is_active)
+Index("idx_bank_settings_primary", BankSettings.is_primary)
     payment = relationship("Payment", back_populates="proof")
 
 
