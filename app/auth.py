@@ -62,7 +62,7 @@ def register(payload: RegisterPayload, db: Session = Depends(get_db)):
 
 
 # =========================
-# LOGIN
+# LOGIN — returns token in body for cross-origin frontends
 # =========================
 
 @router.post("/login")
@@ -73,9 +73,7 @@ def login(
 ):
     user = db.query(User).filter(User.email == payload.email).first()
 
-    if not user or not verify_password(
-        payload.password, user.hashed_password
-    ):
+    if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -87,11 +85,9 @@ def login(
             detail="User disabled",
         )
 
-    token = create_token(
-        user_id=str(user.id),
-        role=user.role,
-    )
+    token = create_token(user_id=str(user.id), role=user.role)
 
+    # Still set cookie for same-origin / Postman use
     response.set_cookie(
         key="access_token",
         value=token,
@@ -99,9 +95,8 @@ def login(
         secure=True,
         samesite="none",
         path="/",
-        max_age=60 * 60 * 24 * 7,  # 7 days
+        max_age=60 * 60 * 24 * 7,
     )
-
     response.headers["Cache-Control"] = "no-store"
 
     return {
@@ -110,6 +105,10 @@ def login(
         "full_name": user.full_name,
         "phone": user.phone,
         "role": user.role,
+        # ✅ TOKEN IN BODY — frontend stores this in localStorage
+        # and sends as Authorization: Bearer <token>
+        "access_token": token,
+        "token_type": "bearer",
     }
 
 
@@ -136,11 +135,6 @@ def me(user: User = Depends(get_current_user)):
 
 @router.post("/logout")
 def logout(response: Response):
-    response.delete_cookie(
-        key="access_token",
-        path="/",
-        secure=True,
-        samesite="none",
-    )
+    response.delete_cookie(key="access_token", path="/", secure=True, samesite="none")
     response.headers["Cache-Control"] = "no-store"
     return {"message": "Logged out"}
