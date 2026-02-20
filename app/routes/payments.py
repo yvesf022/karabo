@@ -611,6 +611,7 @@ def create_payment(
         reference_number=ref,
     )
     db.add(payment)
+    db.flush()  # FIX: assign payment.id before status history references it
 
     _record_status_history(
         db, payment, None, PaymentStatus.pending,

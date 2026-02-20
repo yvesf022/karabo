@@ -278,6 +278,7 @@ def retry_payment(
         reference_number=ref,
     )
     db.add(new_payment)
+    db.flush()  # FIX: assign new_payment.id before status history references it
 
     _record_status_history(
         db, new_payment, None, PaymentStatus.pending,
