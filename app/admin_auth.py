@@ -17,12 +17,6 @@ router = APIRouter(prefix="/api/admin/auth", tags=["admin-auth"])
 # =====================================================
 
 def ensure_admin_exists(db: Session):
-    """
-    Ensures exactly one admin user exists.
-    Admin credentials come ONLY from environment variables.
-    Safe and idempotent on every startup.
-    """
-
     admin_email = os.getenv("ADMIN_EMAIL")
     admin_password = os.getenv("ADMIN_PASSWORD")
 
@@ -30,11 +24,7 @@ def ensure_admin_exists(db: Session):
         print("⚠️ ADMIN_EMAIL or ADMIN_PASSWORD not set — admin bootstrap skipped")
         return
 
-    admin = (
-        db.query(User)
-        .filter(User.email == admin_email)
-        .first()
-    )
+    admin = db.query(User).filter(User.email == admin_email).first()
 
     if admin:
         if admin.role != "admin":
@@ -51,10 +41,8 @@ def ensure_admin_exists(db: Session):
         role="admin",
         is_active=True,
     )
-
     db.add(admin)
     db.commit()
-
     print("✅ Admin user created from environment variables")
 
 
@@ -79,27 +67,19 @@ def admin_login(
 ):
     admin = (
         db.query(User)
-        .filter(
-            User.email == payload.email,
-            User.role == "admin",
-            User.is_active == True,
-        )
+        .filter(User.email == payload.email, User.role == "admin", User.is_active == True)
         .first()
     )
 
-    if not admin or not verify_password(
-        payload.password, admin.hashed_password
-    ):
+    if not admin or not verify_password(payload.password, admin.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials",
         )
 
-    token = create_token(
-        user_id=str(admin.id),
-        role="admin",
-    )
+    token = create_token(user_id=str(admin.id), role="admin")
 
+    # Still set cookie for same-origin use
     response.set_cookie(
         key="admin_access_token",
         value=token,
@@ -107,24 +87,22 @@ def admin_login(
         secure=True,
         samesite="none",
         path="/",
-        max_age=60 * 60 * 8,  # 8 hours
+        max_age=60 * 60 * 8,
     )
 
     return {
         "id": str(admin.id),
         "email": admin.email,
         "role": "admin",
+        # ✅ TOKEN IN BODY — frontend stores in localStorage
+        "access_token": token,
+        "token_type": "bearer",
     }
 
 
 @router.post("/logout")
 def admin_logout(response: Response):
-    response.delete_cookie(
-        key="admin_access_token",
-        path="/",
-        secure=True,
-        samesite="none",
-    )
+    response.delete_cookie(key="admin_access_token", path="/", secure=True, samesite="none")
     return {"message": "Admin logged out"}
 
 
