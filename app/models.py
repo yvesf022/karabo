@@ -313,6 +313,8 @@ class PaymentProof(Base):
     file_url = Column(String, nullable=False)
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+    payment = relationship("Payment", back_populates="proof")
+
 
 # =========================
 # BANK SETTINGS
@@ -338,7 +340,6 @@ class BankSettings(Base):
 
 Index("idx_bank_settings_active", BankSettings.is_active)
 Index("idx_bank_settings_primary", BankSettings.is_primary)
-    payment = relationship("Payment", back_populates="proof")
 
 
 # =========================
