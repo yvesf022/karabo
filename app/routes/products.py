@@ -685,15 +685,12 @@ async def bulk_upload_products(
             if price < 0:
                 raise ValueError("price cannot be negative")
 
-            # Duplicate ASIN check
+            # Parse all fields first (needed for both insert and upsert)
             parent_asin = (row.get("parent_asin") or "").strip()
-            if parent_asin and db.query(Product).filter(Product.parent_asin == parent_asin).first():
-                raise ValueError(f"Duplicate parent_asin: {parent_asin}")
 
             # JSON fields
             categories = safe_json(row.get("categories"), [])
             features   = safe_json(row.get("features"),   [])
-            # FIX: merge specs into details (CSV has both columns)
             details    = safe_json(row.get("details"), {})
             specs      = safe_json(row.get("specs"),   {})
             if isinstance(specs, dict) and specs:
@@ -709,7 +706,7 @@ async def bulk_upload_products(
             compare_price_raw = row.get("compare_price", "")
             compare_price     = float(compare_price_raw) if compare_price_raw else None
 
-            # FIX: CSV uses column name "matched_category", not "category"
+            # CSV uses column name "matched_category", not "category"
             category = (
                 row.get("category")
                 or row.get("matched_category")
@@ -723,44 +720,77 @@ async def bulk_upload_products(
             if status not in valid_statuses:
                 status = "active"
 
-            product = Product(
-                title               = title[:500],
-                short_description   = (row.get("short_description") or title)[:500],
-                description         = row.get("description") or "",
-                main_category       = row.get("main_category") or "",
-                category            = category,
-                categories          = categories,
-                price               = price,
-                compare_price       = compare_price,
-                rating              = rating,
-                rating_number       = rating_number,
-                sales               = sales,           # FIX: was missing — caused NOT NULL crash
-                brand               = row.get("brand") or "",
-                sku                 = row.get("sku") or None,
-                features            = features,
-                details             = details,         # FIX: now includes specs merged in
-                store               = row.get("store") or "",
-                parent_asin         = parent_asin or None,
-                stock               = stock,
-                in_stock            = stock > 0,
-                status              = status,
-                is_deleted          = False,
-                low_stock_threshold = low_stock_threshold,
+            # UPSERT: if parent_asin already exists in DB, update instead of failing
+            existing = (
+                db.query(Product).filter(Product.parent_asin == parent_asin).first()
+                if parent_asin else None
             )
-            db.add(product)
-            db.flush()
 
-            # Images: comma-separated URLs, up to 10
-            image_urls = [u.strip() for u in (row.get("image_urls") or "").split(",") if u.strip()]
-            for pos, url in enumerate(image_urls[:10]):
-                db.add(ProductImage(
-                    product_id=product.id,
-                    image_url=url,
-                    position=pos,
-                    is_primary=(pos == 0),
-                ))
+            if existing and not existing.is_deleted:
+                # Update the existing product with fresh data from CSV
+                existing.title               = title[:500]
+                existing.short_description   = (row.get("short_description") or title)[:500]
+                existing.description         = row.get("description") or ""
+                existing.main_category       = row.get("main_category") or ""
+                existing.category            = category
+                existing.categories          = categories
+                existing.price               = price
+                existing.compare_price       = compare_price
+                existing.rating              = rating
+                existing.rating_number       = rating_number
+                existing.sales               = sales
+                existing.brand               = row.get("brand") or ""
+                existing.sku                 = row.get("sku") or existing.sku
+                existing.features            = features
+                existing.details             = details
+                existing.store               = row.get("store") or existing.store
+                existing.stock               = stock
+                existing.in_stock            = stock > 0
+                existing.status              = status
+                existing.low_stock_threshold = low_stock_threshold
+                product = existing
+                # Replace images if new ones provided
+                image_urls = [u.strip() for u in (row.get("image_urls") or "").split(",") if u.strip()]
+                if image_urls:
+                    for img in list(product.images):
+                        db.delete(img)
+                    db.flush()
+                    for pos, url in enumerate(image_urls[:10]):
+                        db.add(ProductImage(product_id=product.id, image_url=url, position=pos, is_primary=(pos == 0)))
+            else:
+                # Insert new product
+                product = Product(
+                    title               = title[:500],
+                    short_description   = (row.get("short_description") or title)[:500],
+                    description         = row.get("description") or "",
+                    main_category       = row.get("main_category") or "",
+                    category            = category,
+                    categories          = categories,
+                    price               = price,
+                    compare_price       = compare_price,
+                    rating              = rating,
+                    rating_number       = rating_number,
+                    sales               = sales,
+                    brand               = row.get("brand") or "",
+                    sku                 = row.get("sku") or None,
+                    features            = features,
+                    details             = details,
+                    store               = row.get("store") or "",
+                    parent_asin         = parent_asin or None,
+                    stock               = stock,
+                    in_stock            = stock > 0,
+                    status              = status,
+                    is_deleted          = False,
+                    low_stock_threshold = low_stock_threshold,
+                )
+                db.add(product)
+                db.flush()
+                # Add images
+                image_urls = [u.strip() for u in (row.get("image_urls") or "").split(",") if u.strip()]
+                for pos, url in enumerate(image_urls[:10]):
+                    db.add(ProductImage(product_id=product.id, image_url=url, position=pos, is_primary=(pos == 0)))
 
-            db.commit()     # FIX: commit per-row so one failure never wipes others
+            db.commit()
             successful += 1
 
         except Exception as e:
