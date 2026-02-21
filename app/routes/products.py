@@ -655,6 +655,19 @@ async def bulk_upload_products(
     failed     = 0
     errors     = []
 
+    # JSON helper — defined once, outside loop
+    def safe_json(val, fallback):
+        """Parse a JSON string safely; return fallback on any failure."""
+        if not val or (isinstance(val, str) and not val.strip()):
+            return fallback
+        try:
+            result = json.loads(val)
+            if fallback is not None and type(result) is not type(fallback):
+                return fallback
+            return result
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return fallback
+
     for idx, row in enumerate(rows, 1):
         try:
             # Trim all string values
@@ -664,66 +677,81 @@ async def bulk_upload_products(
             if not title:
                 raise ValueError("title is required")
 
-            # Price validation
+            # Price
             try:
                 price = float(row.get("price", 0) or 0)
-            except ValueError:
+            except (ValueError, TypeError):
                 raise ValueError(f"Invalid price: '{row.get('price')}'")
             if price < 0:
                 raise ValueError("price cannot be negative")
 
             # Duplicate ASIN check
-            parent_asin = row.get("parent_asin", "")
+            parent_asin = (row.get("parent_asin") or "").strip()
             if parent_asin and db.query(Product).filter(Product.parent_asin == parent_asin).first():
                 raise ValueError(f"Duplicate parent_asin: {parent_asin}")
 
-            # JSON fields — safe parse with fallbacks
-            def safe_json(val, fallback):
-                if not val:
-                    return fallback
-                try:
-                    return json.loads(val)
-                except (json.JSONDecodeError, TypeError):
-                    return fallback
-
+            # JSON fields
             categories = safe_json(row.get("categories"), [])
-            features   = safe_json(row.get("features"), [])
+            features   = safe_json(row.get("features"),   [])
+            # FIX: merge specs into details (CSV has both columns)
             details    = safe_json(row.get("details"), {})
+            specs      = safe_json(row.get("specs"),   {})
+            if isinstance(specs, dict) and specs:
+                details = {**specs, **details}
 
-            stock    = int(float(row.get("stock", 10) or 10))
-            in_stock = str(row.get("in_stock", "true")).lower() not in ("false", "0", "no")
+            # Numeric fields
+            stock               = int(float(row.get("stock", 10)               or 10))
+            sales               = int(float(row.get("sales", 0)                or 0))
+            rating              = float(row.get("rating", 0)                   or 0)
+            rating_number       = int(float(row.get("rating_number", 0)        or 0))
+            low_stock_threshold = int(float(row.get("low_stock_threshold", 10) or 10))
 
             compare_price_raw = row.get("compare_price", "")
             compare_price     = float(compare_price_raw) if compare_price_raw else None
 
+            # FIX: CSV uses column name "matched_category", not "category"
+            category = (
+                row.get("category")
+                or row.get("matched_category")
+                or (categories[0] if isinstance(categories, list) and categories else "")
+                or ""
+            )
+
+            # Status — validate against allowed values
+            valid_statuses = {"active", "inactive", "draft", "archived", "discontinued"}
+            status = (row.get("status") or "active").strip().lower()
+            if status not in valid_statuses:
+                status = "active"
+
             product = Product(
-                title             = title[:500],
-                short_description = (row.get("short_description") or title)[:500],
-                description       = row.get("description", ""),
-                main_category     = row.get("main_category", ""),
-                category          = row.get("category", "") or (categories[0] if categories else ""),
-                categories        = categories,
-                price             = price,
-                compare_price     = compare_price,
-                rating            = float(row.get("rating", 0) or 0),
-                rating_number     = int(float(row.get("rating_number", 0) or 0)),
-                brand             = row.get("brand", ""),
-                sku               = row.get("sku") or None,
-                features          = features,
-                details           = details,
-                store             = row.get("store", ""),
-                parent_asin       = parent_asin or None,
-                stock             = stock,
-                in_stock          = stock > 0,
-                status            = row.get("status", "active"),
-                is_deleted        = False,
-                low_stock_threshold = int(float(row.get("low_stock_threshold", 10) or 10)),
+                title               = title[:500],
+                short_description   = (row.get("short_description") or title)[:500],
+                description         = row.get("description") or "",
+                main_category       = row.get("main_category") or "",
+                category            = category,
+                categories          = categories,
+                price               = price,
+                compare_price       = compare_price,
+                rating              = rating,
+                rating_number       = rating_number,
+                sales               = sales,           # FIX: was missing — caused NOT NULL crash
+                brand               = row.get("brand") or "",
+                sku                 = row.get("sku") or None,
+                features            = features,
+                details             = details,         # FIX: now includes specs merged in
+                store               = row.get("store") or "",
+                parent_asin         = parent_asin or None,
+                stock               = stock,
+                in_stock            = stock > 0,
+                status              = status,
+                is_deleted          = False,
+                low_stock_threshold = low_stock_threshold,
             )
             db.add(product)
             db.flush()
 
             # Images: comma-separated URLs, up to 10
-            image_urls = [u.strip() for u in (row.get("image_urls", "") or "").split(",") if u.strip()]
+            image_urls = [u.strip() for u in (row.get("image_urls") or "").split(",") if u.strip()]
             for pos, url in enumerate(image_urls[:10]):
                 db.add(ProductImage(
                     product_id=product.id,
@@ -732,14 +760,15 @@ async def bulk_upload_products(
                     is_primary=(pos == 0),
                 ))
 
+            db.commit()     # FIX: commit per-row so one failure never wipes others
             successful += 1
 
         except Exception as e:
+            db.rollback()
             failed += 1
             errors.append({"row": idx, "title": row.get("title", ""), "error": str(e)})
-            db.rollback()
-            # Re-add the upload record after rollback
-            db.add(upload_record)
+            # FIX: use merge (not add) to safely re-attach after rollback
+            upload_record = db.merge(upload_record)
 
     upload_record.successful_rows = successful
     upload_record.failed_rows     = failed
