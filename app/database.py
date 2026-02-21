@@ -45,12 +45,34 @@ def init_database():
     PostgreSQL-safe, idempotent DB initialization.
 
     Guarantees on every startup:
-    - Required ENUMs exist
+    - Required ENUMs exist (including patched values)
     - Stores table exists (needed before Product FK)
     - Missing columns are auto-added to all tables
     - All tables created via ORM
     - Safe for Render (no shell required)
     """
+
+    # ==================================================
+    # 🔥 PATCH ENUMS — Must run OUTSIDE a transaction.
+    # ALTER TYPE ... ADD VALUE IF NOT EXISTS cannot run
+    # inside a transaction block in PostgreSQL.
+    # AUTOCOMMIT isolation level is required here.
+    # ==================================================
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        # Ensure product_status enum exists first
+        conn.execute(text("""
+            DO $$ BEGIN
+                CREATE TYPE product_status AS ENUM
+                ('active','inactive','discontinued','archived','draft');
+            EXCEPTION WHEN duplicate_object THEN null;
+            END $$;
+        """))
+        # Then patch any missing values (safe on existing enum too)
+        for value in ("active", "inactive", "discontinued", "archived", "draft"):
+            conn.execute(text(f"""
+                ALTER TYPE product_status ADD VALUE IF NOT EXISTS '{value}';
+            """))
 
     with engine.begin() as conn:
 
