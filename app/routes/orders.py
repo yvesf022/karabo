@@ -37,6 +37,21 @@ class CreateOrderPayload(BaseModel):
 # HELPERS
 # =====================================================
 
+
+def _get_product_image(product) -> str | None:
+    """
+    Product has no main_image column — images live in the ProductImage
+    relationship (ordered by position). Prefer is_primary=True, then
+    fall back to the first image by position.
+    """
+    if not product or not product.images:
+        return None
+    for img in product.images:
+        if img.is_primary:
+            return img.image_url
+    return product.images[0].image_url
+
+
 def _serialize_order_summary(o: Order) -> dict:
     return {
         "id":               str(o.id),
@@ -48,7 +63,6 @@ def _serialize_order_summary(o: Order) -> dict:
         "created_at":       o.created_at,
         "updated_at":       o.updated_at,
         "tracking_number":  o.tracking.tracking_number if o.tracking else None,
-        # Include lightweight item list so list page can show real product thumbnails
         "items": [
             {
                 "id":         str(i.id),
@@ -59,7 +73,8 @@ def _serialize_order_summary(o: Order) -> dict:
                 "subtotal":   i.subtotal,
                 "product": {
                     "id":         str(i.product_id),
-                    "main_image": i.product.main_image if i.product else None,
+                    # Resolved from images relationship (Product has no main_image column)
+                    "main_image": _get_product_image(i.product),
                     "images": [
                         {"image_url": img.image_url, "is_primary": img.is_primary}
                         for img in (i.product.images[:1] if i.product and i.product.images else [])
@@ -95,7 +110,8 @@ def _serialize_order_detail(o: Order, include_admin_fields: bool = False) -> dic
                 # Inline product snapshot — frontend never needs a second request for images
                 "product": {
                     "id":         str(i.product_id),
-                    "main_image": i.product.main_image if i.product else None,
+                    # Resolved from images relationship (Product has no main_image column)
+                    "main_image": _get_product_image(i.product),
                     "images": [
                         {"image_url": img.image_url, "is_primary": img.is_primary}
                         for img in (i.product.images[:3] if i.product and i.product.images else [])
