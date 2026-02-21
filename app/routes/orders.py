@@ -9,7 +9,7 @@ from app.dependencies import get_current_user, require_admin
 from app.models import (
     Order, OrderStatus, OrderItem, OrderTracking,
     ShippingStatus, Payment, PaymentStatus,
-    Product, ProductVariant,
+    Product, ProductVariant, ProductImage,
     User, Cart, CartItem,
 )
 
@@ -47,6 +47,27 @@ def _serialize_order_summary(o: Order) -> dict:
         "notes":            o.notes,
         "created_at":       o.created_at,
         "updated_at":       o.updated_at,
+        "tracking_number":  o.tracking.tracking_number if o.tracking else None,
+        # Include lightweight item list so list page can show real product thumbnails
+        "items": [
+            {
+                "id":         str(i.id),
+                "product_id": str(i.product_id) if i.product_id else None,
+                "title":      i.product_title,
+                "quantity":   i.quantity,
+                "price":      i.price,
+                "subtotal":   i.subtotal,
+                "product": {
+                    "id":         str(i.product_id),
+                    "main_image": i.product.main_image if i.product else None,
+                    "images": [
+                        {"image_url": img.image_url, "is_primary": img.is_primary}
+                        for img in (i.product.images[:1] if i.product and i.product.images else [])
+                    ],
+                } if i.product else None,
+            }
+            for i in (o.items if hasattr(o, "items") and o.items else [])
+        ],
     }
 
 
@@ -65,11 +86,27 @@ def _serialize_order_detail(o: Order, include_admin_fields: bool = False) -> dic
             {
                 "id":            str(i.id),
                 "product_id":    str(i.product_id) if i.product_id else None,
+                "title":         i.product_title,   # alias so frontend can use item.title
                 "product_title": i.product_title,
                 "variant_title": i.variant_title,
                 "quantity":      i.quantity,
                 "price":         i.price,
                 "subtotal":      i.subtotal,
+                # Inline product snapshot — frontend never needs a second request for images
+                "product": {
+                    "id":         str(i.product_id),
+                    "main_image": i.product.main_image if i.product else None,
+                    "images": [
+                        {"image_url": img.image_url, "is_primary": img.is_primary}
+                        for img in (i.product.images[:3] if i.product and i.product.images else [])
+                    ],
+                } if i.product else None,
+                "variant": {
+                    "id":         str(i.variant.id),
+                    "title":      i.variant.title,
+                    "attributes": i.variant.attributes or {},
+                    "image_url":  i.variant.image_url,
+                } if i.variant else None,
             }
             for i in o.items
         ] if hasattr(o, "items") and o.items else [],
@@ -237,6 +274,10 @@ def my_orders(
 ):
     query = (
         db.query(Order)
+        .options(
+            joinedload(Order.items).joinedload(OrderItem.product).joinedload(Product.images),
+            joinedload(Order.tracking),
+        )
         .filter(Order.user_id == user.id, Order.is_deleted == False)
     )
     if status_filter:
@@ -406,7 +447,8 @@ def admin_get_order_detail(
     order = (
         db.query(Order)
         .options(
-            joinedload(Order.items),
+            joinedload(Order.items).joinedload(OrderItem.product).joinedload(Product.images),
+            joinedload(Order.items).joinedload(OrderItem.variant),
             joinedload(Order.payments).joinedload(Payment.proof),
             joinedload(Order.tracking),
         )
@@ -432,7 +474,8 @@ def get_my_order_detail(
     order = (
         db.query(Order)
         .options(
-            joinedload(Order.items),
+            joinedload(Order.items).joinedload(OrderItem.product).joinedload(Product.images),
+            joinedload(Order.items).joinedload(OrderItem.variant),
             joinedload(Order.payments).joinedload(Payment.proof),
             joinedload(Order.tracking),
         )
