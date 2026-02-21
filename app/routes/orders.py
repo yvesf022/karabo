@@ -63,6 +63,11 @@ def _serialize_order_summary(o: Order) -> dict:
         "created_at":       o.created_at,
         "updated_at":       o.updated_at,
         "tracking_number":  o.tracking.tracking_number if o.tracking else None,
+        "user": {
+            "id":        str(o.user.id),
+            "email":     o.user.email,
+            "full_name": o.user.full_name,
+        } if hasattr(o, "user") and o.user else None,
         "items": [
             {
                 "id":         str(i.id),
@@ -391,12 +396,24 @@ def admin_orders(
         except ValueError:
             raise HTTPException(400, f"Invalid shipping status: '{shipping_filter}'")
 
-    total  = query.count()
-    orders = query.order_by(Order.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
-
-    # Status summary counts
+    total = query.count()
+    # Status summary counts (before pagination)
     from sqlalchemy import func
     stats = db.query(Order.status, func.count(Order.id)).filter(Order.is_deleted == False).group_by(Order.status).all()
+
+    orders = (
+        query
+        .options(
+            joinedload(Order.items).joinedload(OrderItem.product).joinedload(Product.images),
+            joinedload(Order.items).joinedload(OrderItem.variant),
+            joinedload(Order.tracking),
+            joinedload(Order.user),
+        )
+        .order_by(Order.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
 
     return {
         "total":    total,
@@ -404,19 +421,7 @@ def admin_orders(
         "per_page": per_page,
         "pages":    (total + per_page - 1) // per_page,
         "stats":    {s.value: c for s, c in stats},
-        "results": [
-            {
-                "id":               str(o.id),
-                "user_id":          str(o.user_id),
-                "total_amount":     o.total_amount,
-                "status":           o.status,
-                "shipping_status":  o.shipping_status,
-                "notes":            o.notes,
-                "created_at":       o.created_at,
-                "updated_at":       o.updated_at,
-            }
-            for o in orders
-        ],
+        "results":  [_serialize_order_summary(o) for o in orders],
     }
 
 

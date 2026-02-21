@@ -184,6 +184,9 @@ def admin_list_products(
     search:          Optional[str]   = None,
     status:          Optional[str]   = None,
     stock:           Optional[str]   = None,
+    # Frontend sends low_stock=true / in_stock=false for stock filters
+    low_stock:       Optional[bool]  = None,
+    in_stock:        Optional[bool]  = None,
     rating:          Optional[float] = None,
     store:           Optional[str]   = None,
     store_id:        Optional[str]   = None,
@@ -191,6 +194,9 @@ def admin_list_products(
     category:        Optional[str]   = None,
     include_deleted: bool = False,
     sort:            Optional[str]   = None,
+    # Frontend uses sort_by + sort_dir instead of single sort string
+    sort_by:         Optional[str]   = None,
+    sort_dir:        Optional[str]   = "desc",
     page:            int = Query(1, ge=1),
     per_page:        int = Query(50, ge=1, le=200),
 ):
@@ -212,23 +218,40 @@ def admin_list_products(
         query = query.filter(Product.category == category)
     if rating is not None:
         query = query.filter(Product.rating >= rating)
-    if stock == "out":
+    if stock == "out" or in_stock is False:
         query = query.filter(Product.stock == 0)
-    elif stock == "low":
+    elif stock == "low" or low_stock is True:
         query = query.filter(Product.stock > 0, Product.stock <= Product.low_stock_threshold)
-    elif stock == "in":
+    elif stock == "in" or in_stock is True:
         query = query.filter(Product.stock > 0)
 
-    sort_map = {
-        "price_asc":   Product.price.asc(),
-        "price_desc":  Product.price.desc(),
-        "stock_asc":   Product.stock.asc(),
-        "stock_desc":  Product.stock.desc(),
-        "newest":      Product.created_at.desc(),
-        "oldest":      Product.created_at.asc(),
-        "sales":       Product.sales.desc(),
-    }
-    query = query.order_by(sort_map.get(sort, Product.created_at.desc()))
+    # Support both old single-string sort and new sort_by+sort_dir params from frontend
+    def _get_order():
+        # New-style: sort_by + sort_dir
+        if sort_by:
+            col_map = {
+                "title":      Product.title,
+                "price":      Product.price,
+                "stock":      Product.stock,
+                "sales":      Product.sales,
+                "created_at": Product.created_at,
+                "rating":     Product.rating,
+            }
+            col = col_map.get(sort_by, Product.created_at)
+            return col.asc() if sort_dir == "asc" else col.desc()
+        # Old-style: single sort string
+        sort_map = {
+            "price_asc":   Product.price.asc(),
+            "price_desc":  Product.price.desc(),
+            "stock_asc":   Product.stock.asc(),
+            "stock_desc":  Product.stock.desc(),
+            "newest":      Product.created_at.desc(),
+            "oldest":      Product.created_at.asc(),
+            "sales":       Product.sales.desc(),
+        }
+        return sort_map.get(sort, Product.created_at.desc())
+
+    query = query.order_by(_get_order())
 
     total    = query.count()
     products = query.offset((page - 1) * per_page).limit(per_page).all()
@@ -444,7 +467,8 @@ def bulk_hard_delete(payload: dict, db: Session = Depends(get_db), admin=Depends
         raise HTTPException(400, "ids required")
     if not payload.get("confirm"):
         raise HTTPException(400, "Send confirm: true to proceed with permanent deletion")
-    products = db.query(Product).filter(Product.id.in_(ids), Product.is_deleted == True).all()
+    # Allow hard-deleting any product regardless of soft-delete state
+    products = db.query(Product).filter(Product.id.in_(ids)).all()
     count    = len(products)
     for p in products:
         db.delete(p)
@@ -454,10 +478,18 @@ def bulk_hard_delete(payload: dict, db: Session = Depends(get_db), admin=Depends
 
 
 @router.delete("/admin/empty-store", dependencies=[Depends(require_admin)])
-def empty_store(payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
-    """Soft-deletes all products. Use store-reset/products-only for hard delete."""
-    if not payload.get("confirm"):
-        raise HTTPException(400, "Send confirm: true to proceed")
+def empty_store(
+    confirm: Optional[bool] = Query(None),
+    payload: dict = None,
+    db: Session = Depends(get_db),
+    admin = Depends(require_admin),
+):
+    """Soft-deletes all products. Accepts confirm=true as query param OR JSON body."""
+    # Accept confirm from query param (frontend) or JSON body (Postman/API)
+    payload = payload or {}
+    confirmed = confirm is True or payload.get("confirm") is True
+    if not confirmed:
+        raise HTTPException(400, "Send confirm=true to proceed")
     count = db.query(Product).filter(Product.is_deleted == False).update(
         {"is_deleted": True, "deleted_at": datetime.now(timezone.utc), "status": "inactive"},
         synchronize_session=False,
