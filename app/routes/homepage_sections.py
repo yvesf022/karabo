@@ -214,14 +214,18 @@ def _card(p: Product) -> dict:
         "price": p.price, "compare_price": p.compare_price,
         "discount_pct": disc, "brand": p.brand, "category": p.category,
         "rating": p.rating, "rating_number": p.rating_number,
-        "sales": p.sales, "in_stock": p.stock > 0, "main_image": img,
+        "sales": p.sales, "in_stock": p.stock > 0,
+        "main_image": img,
+        "images": [i.image_url for i in p.images],
     }
 
 
 def _active(db: Session):
+    """Only return active, non-deleted products that have at least one image."""
     return db.query(Product).filter(
         Product.status == "active",
         Product.is_deleted == False,
+        Product.images.any(),          # ← FIX: only products with real images
     )
 
 
@@ -259,7 +263,9 @@ def homepage_sections(db: Session = Depends(get_db)):
 
     # 5-N — Smart Category Sections
     all_products = (_active(db).filter(Product.stock > 0)
-        .order_by(Product.rating.desc(), Product.sales.desc()).all())
+        .order_by(func.random())          # ← FIX: random order so categories are diverse
+        .limit(2000)                       # cap for performance
+        .all())
 
     buckets: dict[str, list] = {}
     for p in all_products:

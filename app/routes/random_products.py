@@ -104,6 +104,7 @@ def random_products(
     with_images: bool          = Query(True),
     seed:        Optional[int] = Query(None),
     exclude:     Optional[str] = Query(None,  description="Comma-separated product IDs to exclude"),
+    diverse:     bool          = Query(False, description="If true, ensure category diversity (one per category then fill)"),
 ):
     """
     Return `count` genuinely random active products.
@@ -112,14 +113,62 @@ def random_products(
     - If `seed` is provided, calls setseed() first so results are
       reproducible for that seed value (handy for SSR).
     - Products without images are excluded by default (`with_images=true`).
+    - If `diverse=true`, picks up to one product per category first, then
+      fills remaining slots randomly — guarantees visual variety in hero grids.
     """
     exclude_ids = [x.strip() for x in exclude.split(",")] if exclude else []
 
     # Apply seed for reproducible randomness when needed
     if seed is not None:
-        # setseed accepts -1.0 to 1.0; we normalise the int into that range
         normalised = ((seed % 10000) / 10000.0) * 2 - 1
         db.execute(text(f"SELECT setseed({normalised:.6f})"))
+
+    if diverse:
+        # ── Diverse mode: one product per category, then fill the rest ──
+        # Get distinct categories that have qualifying products
+        cats_q = (
+            _base(db, with_images=with_images, exclude_ids=exclude_ids)
+            .with_entities(Product.category)
+            .filter(Product.category != None)
+            .distinct()
+            .order_by(func.random())
+            .limit(count)
+            .all()
+        )
+        categories = [r[0] for r in cats_q if r[0]]
+
+        seen_ids: set = set()
+        result: list[Product] = []
+
+        # One random product per category
+        for cat in categories:
+            if len(result) >= count:
+                break
+            p = (
+                _base(db, with_images=with_images, exclude_ids=exclude_ids)
+                .filter(Product.category == cat)
+                .order_by(func.random())
+                .first()
+            )
+            if p and p.id not in seen_ids:
+                result.append(p)
+                seen_ids.add(p.id)
+
+        # Fill remaining slots with any random products not already chosen
+        if len(result) < count:
+            extra_exclude = exclude_ids + [str(p.id) for p in result]
+            extras = (
+                _base(db, with_images=with_images, exclude_ids=extra_exclude)
+                .order_by(func.random())
+                .limit(count - len(result))
+                .all()
+            )
+            result.extend(extras)
+
+        return {
+            "count":    len(result),
+            "products": [_card(p) for p in result],
+        }
 
     products = (
         _base(db, with_images=with_images, exclude_ids=exclude_ids)
