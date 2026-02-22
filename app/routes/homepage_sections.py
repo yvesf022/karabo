@@ -236,26 +236,26 @@ def homepage_sections(db: Session = Depends(get_db)):
         .limit(SECTION_LIMIT).all())
     if flash:
         sections.append({"key":"flash_deals","title":"Flash Deals","subtitle":"Biggest discounts right now",
-            "badge":"SALE","theme":"red","view_all":"/products?sort=discount","products":[_card(p) for p in flash]})
+            "badge":"SALE","theme":"red","view_all":"/store?sort=discount","products":[_card(p) for p in flash]})
 
     # 2 — New Arrivals
     new = (_active(db).filter(Product.stock > 0).order_by(Product.created_at.desc()).limit(SECTION_LIMIT).all())
     if new:
         sections.append({"key":"new_arrivals","title":"New Arrivals","subtitle":"Fresh styles just landed",
-            "badge":"NEW","theme":"green","view_all":"/products?sort=newest","products":[_card(p) for p in new]})
+            "badge":"NEW","theme":"green","view_all":"/store?sort=newest","products":[_card(p) for p in new]})
 
     # 3 — Best Sellers
     best = (_active(db).filter(Product.sales > 0, Product.stock > 0).order_by(Product.sales.desc()).limit(SECTION_LIMIT).all())
     if best:
         sections.append({"key":"best_sellers","title":"Best Sellers","subtitle":"What everyone is buying",
-            "badge":None,"theme":"gold","view_all":"/products?sort=sales","products":[_card(p) for p in best]})
+            "badge":None,"theme":"gold","view_all":"/store?sort=popular","products":[_card(p) for p in best]})
 
     # 4 — Top Rated
     rated = (_active(db).filter(Product.rating >= 4.0, Product.rating_number >= 3, Product.stock > 0)
         .order_by(Product.rating.desc(), Product.rating_number.desc()).limit(SECTION_LIMIT).all())
     if rated:
         sections.append({"key":"top_rated","title":"Top Rated","subtitle":"Highest rated by customers",
-            "badge":None,"theme":"gold","view_all":"/products?sort=rating","products":[_card(p) for p in rated]})
+            "badge":None,"theme":"gold","view_all":"/store?sort=rating","products":[_card(p) for p in rated]})
 
     # 5-N — Smart Category Sections
     all_products = (_active(db).filter(Product.stock > 0)
@@ -281,7 +281,7 @@ def homepage_sections(db: Session = Depends(get_db)):
             "key": f"cat_{slug}", "title": cat,
             "subtitle": f"Shop all {cat.lower()}",
             "badge": None, "theme": themes[i % len(themes)],
-            "view_all": f"/products?search={cat.split()[0]}",
+            "view_all": f"/store?q={cat.split()[0]}",
             "products": prods,
         })
 

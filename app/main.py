@@ -30,6 +30,7 @@ from app.routes import (
     admin_payments_advanced,
     admin_users_advanced,
     homepage_sections,          # ← Smart homepage sections
+    random_products,            # ← Random products endpoint
 )
 
 
@@ -83,6 +84,12 @@ app.include_router(admin_users_advanced.router,     prefix="/api")
 # ── Homepage Sections (smart product categoriser) ──────────────────
 app.include_router(homepage_sections.router, prefix="/api")
 # Endpoint: GET /api/homepage/sections
+
+# ── Random Products (hero grid, discovery carousels) ───────────────
+app.include_router(random_products.router, prefix="/api")
+# Endpoints:
+#   GET /api/products/random?count=20&with_images=true&seed=<int>&exclude=id1,id2
+#   GET /api/products/random/categories?per_category=6&max_cats=12
 
 
 @app.on_event("startup")

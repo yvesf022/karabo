@@ -137,8 +137,13 @@ def list_products(
         "rating":     Product.rating.desc(),
         "newest":     Product.created_at.desc(),
         "sales":      Product.sales.desc(),
+        "random":     func.random(),
+        "discount":   (Product.compare_price - Product.price).desc(),
     }
-    query = query.order_by(sort_map.get(sort, Product.created_at.desc()))
+    if sort == "random":
+        query = query.order_by(func.random())
+    else:
+        query = query.order_by(sort_map.get(sort, Product.created_at.desc()))
 
     total    = query.count()
     products = query.offset((page - 1) * per_page).limit(per_page).all()
