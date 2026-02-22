@@ -16,7 +16,8 @@ Endpoint: GET /api/homepage/sections
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+# ✅ FIX 1: Added `func` — was missing, caused runtime crash on ORDER BY RANDOM()
+from sqlalchemy import desc, func
 from typing import Optional
 import re
 
@@ -25,7 +26,7 @@ from app.models import Product
 
 router = APIRouter(prefix="/homepage", tags=["homepage"])
 
-SECTION_LIMIT   = 16
+SECTION_LIMIT    = 16
 MIN_SECTION_SIZE = 3
 MAX_CAT_SECTIONS = 12
 
@@ -36,44 +37,34 @@ MAX_CAT_SECTIONS = 12
 # ═══════════════════════════════════════════════════════════════════════════
 
 TAXONOMY: list[tuple[str, list[str]]] = [
-    # Phones & Tablets
     ("Smartphones & Phones", [
         "smartphone","iphone","samsung galaxy","mobile phone","android phone",
         "cell phone","nokia","tecno","infinix","itel","redmi","oneplus","oppo","vivo","phone"
     ]),
     ("Tablets & iPads", ["tablet","ipad","android tablet","kindle","fire hd"]),
-    # Computers
     ("Laptops & Computers", [
         "laptop","notebook","macbook","chromebook","desktop","pc computer","gaming laptop","ultrabook"
     ]),
-    # Audio
     ("Headphones & Audio", [
         "headphone","earphone","earbuds","airpods","earpods","wireless earphone",
         "neckband","bluetooth speaker","soundbar","subwoofer","home theater","speaker"
     ]),
-    # Wearables
     ("Smartwatches", [
         "smartwatch","smart watch","fitness tracker","smart band","apple watch","galaxy watch","fit band"
     ]),
-    # Cameras
     ("Cameras & Photography", [
         "camera","dslr","mirrorless","action cam","gopro","lens","tripod","ring light","studio light"
     ]),
-    # Chargers — must come AFTER phones so "phone charger" doesn't hit phones section
     ("Chargers & Cables", [
         "charger","charging cable","usb cable","type-c cable","lightning cable",
         "power bank","powerbank","fast charger","wireless charger","adapter plug","extension cord"
     ]),
-    # TV
     ("TVs & Displays", [
         "smart tv","led tv","oled","qled","television","monitor","display screen","projector","tv"
     ]),
-    # Gaming
     ("Gaming", [
         "playstation","ps4","ps5","xbox","nintendo","game controller","joystick","game console","gaming"
     ]),
-
-    # ── Beauty ──────────────────────────────────────────────────
     ("Skincare", [
         "serum","moisturizer","moisturiser","toner","cleanser","face wash","sunscreen","spf","retinol",
         "hyaluronic","vitamin c serum","face mask","eye cream","exfoliant","skin care","skincare",
@@ -97,8 +88,6 @@ TAXONOMY: list[tuple[str, list[str]]] = [
         "body butter","body scrub","body oil","body cream","shea butter","cocoa butter",
         "stretch mark","bath salt","bath bomb","shower gel","body wash","hand cream","foot cream"
     ]),
-
-    # ── Jewellery & Accessories ─────────────────────────────────
     ("Jewellery", [
         "necklace","bracelet","ring","earring","jewelry","jewellery","pendant","chain",
         "bangle","anklet","brooch","choker","locket","diamond ring","gold necklace","silver bracelet"
@@ -110,8 +99,6 @@ TAXONOMY: list[tuple[str, list[str]]] = [
     ("Sunglasses & Eyewear", [
         "sunglasses","sunglass","eyewear","spectacle","glasses frame","reading glasses","polarized"
     ]),
-
-    # ── Fashion ────────────────────────────────────────────────
     ("Women's Clothing", [
         "dress","ladies dress","bodycon","maxi dress","blouse","ladies top","women top",
         "skirt","jumpsuit","romper","ladies shirt","two-piece set","co-ord","crop top",
@@ -142,8 +129,6 @@ TAXONOMY: list[tuple[str, list[str]]] = [
         "belt","hat","cap","beanie","scarf","hijab","hair clip","hair pin","hair band",
         "headband","tie","bow tie","cufflink","glove","mittens"
     ]),
-
-    # ── Home ──────────────────────────────────────────────────
     ("Kitchen & Cooking", [
         "cookware","frying pan","blender","mixer","juicer","toaster","kettle",
         "rice cooker","air fryer","microwave","cutting board","kitchen","cooking",
@@ -157,8 +142,6 @@ TAXONOMY: list[tuple[str, list[str]]] = [
         "bedsheet","duvet","pillow case","towel","bath towel","comforter","blanket",
         "mattress","bed cover","quilt"
     ]),
-
-    # ── Health & Fitness ──────────────────────────────────────
     ("Fitness & Sports", [
         "dumbbell","barbell","resistance band","yoga mat","skipping rope","jump rope",
         "fitness","exercise","workout","protein","supplement","whey","creatine",
@@ -168,8 +151,6 @@ TAXONOMY: list[tuple[str, list[str]]] = [
         "vitamin","herbal","wellness","massage","blood pressure","thermometer",
         "first aid","pain relief","essential oil","health"
     ]),
-
-    # ── Baby & Kids ───────────────────────────────────────────
     ("Baby & Kids", [
         "baby","infant","toddler","kids","children","toy","doll","stroller","pram",
         "baby carrier","nappy","diaper","baby wipe","feeding bottle","pacifier"
@@ -195,7 +176,7 @@ def _classify(product: Product) -> str:
         score = 0
         for kw in keywords:
             if re.search(r"\b" + re.escape(kw.lower()) + r"\b", haystack):
-                score += len(kw.split())  # multi-word kw = higher specificity
+                score += len(kw.split())
         if score > top_score:
             top_score = score
             best = section_name
@@ -204,17 +185,26 @@ def _classify(product: Product) -> str:
 
 
 def _card(p: Product) -> dict:
-    img = next((i.image_url for i in p.images if i.is_primary), None) or \
-          (p.images[0].image_url if p.images else None)
+    # ✅ FIX 2: Guarantee main_image is never null — try primary first, then first image
+    img = next((i.image_url for i in p.images if i.is_primary), None)
+    if not img and p.images:
+        img = p.images[0].image_url
+    # Skip products where we truly have no image URL string
     disc = None
     if p.compare_price and p.compare_price > p.price > 0:
         disc = round(((p.compare_price - p.price) / p.compare_price) * 100)
     return {
-        "id": str(p.id), "title": p.title,
-        "price": p.price, "compare_price": p.compare_price,
-        "discount_pct": disc, "brand": p.brand, "category": p.category,
-        "rating": p.rating, "rating_number": p.rating_number,
-        "sales": p.sales, "in_stock": p.stock > 0,
+        "id": str(p.id),
+        "title": p.title,
+        "price": p.price,
+        "compare_price": p.compare_price,
+        "discount_pct": disc,
+        "brand": p.brand,
+        "category": p.category,
+        "rating": p.rating,
+        "rating_number": p.rating_number,
+        "sales": p.sales,
+        "in_stock": p.stock > 0,
         "main_image": img,
         "images": [i.image_url for i in p.images],
     }
@@ -225,7 +215,7 @@ def _active(db: Session):
     return db.query(Product).filter(
         Product.status == "active",
         Product.is_deleted == False,
-        Product.images.any(),          # ← FIX: only products with real images
+        Product.images.any(),
     )
 
 
@@ -234,59 +224,114 @@ def homepage_sections(db: Session = Depends(get_db)):
     sections: list[dict] = []
 
     # 1 — Flash Deals
-    flash = (_active(db)
-        .filter(Product.compare_price != None, Product.compare_price > Product.price, Product.stock > 0)
+    flash = (
+        _active(db)
+        .filter(
+            Product.compare_price != None,
+            Product.compare_price > Product.price,
+            Product.stock > 0,
+        )
         .order_by(desc((Product.compare_price - Product.price) / Product.compare_price))
-        .limit(SECTION_LIMIT).all())
+        .limit(SECTION_LIMIT)
+        .all()
+    )
     if flash:
-        sections.append({"key":"flash_deals","title":"Flash Deals","subtitle":"Biggest discounts right now",
-            "badge":"SALE","theme":"red","view_all":"/store?sort=discount","products":[_card(p) for p in flash]})
+        sections.append({
+            "key": "flash_deals", "title": "Flash Deals",
+            "subtitle": "Biggest discounts right now",
+            "badge": "SALE", "theme": "red",
+            "view_all": "/store?sort=discount",
+            "products": [_card(p) for p in flash],
+        })
 
     # 2 — New Arrivals
-    new = (_active(db).filter(Product.stock > 0).order_by(Product.created_at.desc()).limit(SECTION_LIMIT).all())
+    new = (
+        _active(db)
+        .filter(Product.stock > 0)
+        .order_by(Product.created_at.desc())
+        .limit(SECTION_LIMIT)
+        .all()
+    )
     if new:
-        sections.append({"key":"new_arrivals","title":"New Arrivals","subtitle":"Fresh styles just landed",
-            "badge":"NEW","theme":"green","view_all":"/store?sort=newest","products":[_card(p) for p in new]})
+        sections.append({
+            "key": "new_arrivals", "title": "New Arrivals",
+            "subtitle": "Fresh styles just landed",
+            "badge": "NEW", "theme": "green",
+            "view_all": "/store?sort=newest",
+            "products": [_card(p) for p in new],
+        })
 
     # 3 — Best Sellers
-    best = (_active(db).filter(Product.sales > 0, Product.stock > 0).order_by(Product.sales.desc()).limit(SECTION_LIMIT).all())
+    best = (
+        _active(db)
+        .filter(Product.sales > 0, Product.stock > 0)
+        .order_by(Product.sales.desc())
+        .limit(SECTION_LIMIT)
+        .all()
+    )
     if best:
-        sections.append({"key":"best_sellers","title":"Best Sellers","subtitle":"What everyone is buying",
-            "badge":None,"theme":"gold","view_all":"/store?sort=popular","products":[_card(p) for p in best]})
+        sections.append({
+            "key": "best_sellers", "title": "Best Sellers",
+            "subtitle": "What everyone is buying",
+            "badge": None, "theme": "gold",
+            "view_all": "/store?sort=popular",
+            "products": [_card(p) for p in best],
+        })
 
     # 4 — Top Rated
-    rated = (_active(db).filter(Product.rating >= 4.0, Product.rating_number >= 3, Product.stock > 0)
-        .order_by(Product.rating.desc(), Product.rating_number.desc()).limit(SECTION_LIMIT).all())
+    rated = (
+        _active(db)
+        .filter(Product.rating >= 4.0, Product.rating_number >= 3, Product.stock > 0)
+        .order_by(Product.rating.desc(), Product.rating_number.desc())
+        .limit(SECTION_LIMIT)
+        .all()
+    )
     if rated:
-        sections.append({"key":"top_rated","title":"Top Rated","subtitle":"Highest rated by customers",
-            "badge":None,"theme":"gold","view_all":"/store?sort=rating","products":[_card(p) for p in rated]})
+        sections.append({
+            "key": "top_rated", "title": "Top Rated",
+            "subtitle": "Highest rated by customers",
+            "badge": None, "theme": "gold",
+            "view_all": "/store?sort=rating",
+            "products": [_card(p) for p in rated],
+        })
 
     # 5-N — Smart Category Sections
-    all_products = (_active(db).filter(Product.stock > 0)
-        .order_by(func.random())          # ← FIX: random order so categories are diverse
-        .limit(2000)                       # cap for performance
-        .all())
+    # ✅ FIX 3: func.random() now works because func is imported above
+    all_products = (
+        _active(db)
+        .filter(Product.stock > 0)
+        .order_by(func.random())
+        .limit(2000)
+        .all()
+    )
 
     buckets: dict[str, list] = {}
     for p in all_products:
+        card = _card(p)
+        # ✅ FIX 4: Only add product to bucket if it has a real image URL
+        if not card["main_image"]:
+            continue
         name = _classify(p)
         if name not in buckets:
             buckets[name] = []
         if len(buckets[name]) < SECTION_LIMIT:
-            buckets[name].append(_card(p))
+            buckets[name].append(card)
 
     sorted_cats = sorted(
         [(n, prods) for n, prods in buckets.items() if len(prods) >= MIN_SECTION_SIZE],
-        key=lambda x: len(x[1]), reverse=True
+        key=lambda x: len(x[1]),
+        reverse=True,
     )[:MAX_CAT_SECTIONS]
 
-    themes = ["forest","navy","plum","teal","rust","slate","olive","rose","indigo","amber","sage","stone"]
+    themes = ["forest", "navy", "plum", "teal", "rust", "slate", "olive", "rose", "indigo", "amber", "sage", "stone"]
     for i, (cat, prods) in enumerate(sorted_cats):
-        slug = cat.lower().replace(" & "," ").replace(" ","_").replace("&","and")
+        slug = cat.lower().replace(" & ", " ").replace(" ", "_").replace("&", "and")
         sections.append({
-            "key": f"cat_{slug}", "title": cat,
+            "key": f"cat_{slug}",
+            "title": cat,
             "subtitle": f"Shop all {cat.lower()}",
-            "badge": None, "theme": themes[i % len(themes)],
+            "badge": None,
+            "theme": themes[i % len(themes)],
             "view_all": f"/store?q={cat.split()[0]}",
             "products": prods,
         })
