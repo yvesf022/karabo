@@ -29,22 +29,11 @@ from app.routes import (
     admin_orders_advanced,
     admin_payments_advanced,
     admin_users_advanced,
+    homepage_sections,          # ← Smart homepage sections
 )
 
 
-# ======================================================
-# APP
-# ======================================================
-
-app = FastAPI(
-    title="Karabo API",
-    version="1.0.0"
-)
-
-
-# ======================================================
-# CORS (COOKIE-BASED AUTH SAFE)
-# ======================================================
+app = FastAPI(title="Karabo API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,126 +46,63 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ======================================================
-# ROUTES
-# ======================================================
-
-# Health routes (NO /api prefix)
+# ── Health & Auth ──────────────────────────────────────────────────
 app.include_router(health.router)
+app.include_router(auth_router)
+app.include_router(admin_auth_router)
 
-# Auth routes (already internally prefixed)
-app.include_router(auth_router)         # /api/auth/*
-app.include_router(admin_auth_router)   # /api/admin/auth/*
+# ── Core API ───────────────────────────────────────────────────────
+app.include_router(users.router,           prefix="/api")
+app.include_router(products.router,        prefix="/api")
+app.include_router(orders.router,          prefix="/api")
+app.include_router(payments.router,        prefix="/api")
+app.include_router(admin.router,           prefix="/api")
+app.include_router(admin_users.router,     prefix="/api")
+app.include_router(password_reset.router,  prefix="/api")
 
-# Core API routes
-app.include_router(users.router, prefix="/api")
-app.include_router(products.router, prefix="/api")
-app.include_router(orders.router, prefix="/api")
-app.include_router(payments.router, prefix="/api")
-app.include_router(admin.router, prefix="/api")
-app.include_router(admin_users.router, prefix="/api")
-app.include_router(password_reset.router, prefix="/api")
-
-# Enterprise Features - User APIs
-app.include_router(addresses.router, prefix="/api")
-app.include_router(cart.router, prefix="/api")
-app.include_router(wishlist.router, prefix="/api")
-app.include_router(reviews.router, prefix="/api")
-app.include_router(product_qa.router, prefix="/api")
-app.include_router(search.router, prefix="/api")
-app.include_router(categories_brands.router, prefix="/api")
-app.include_router(notifications.router, prefix="/api")
-app.include_router(recently_viewed.router, prefix="/api")
-app.include_router(coupons.router, prefix="/api")
-app.include_router(order_enhancements.router, prefix="/api")
+# ── Enterprise — User ──────────────────────────────────────────────
+app.include_router(addresses.router,            prefix="/api")
+app.include_router(cart.router,                 prefix="/api")
+app.include_router(wishlist.router,             prefix="/api")
+app.include_router(reviews.router,              prefix="/api")
+app.include_router(product_qa.router,           prefix="/api")
+app.include_router(search.router,               prefix="/api")
+app.include_router(categories_brands.router,    prefix="/api")
+app.include_router(notifications.router,        prefix="/api")
+app.include_router(recently_viewed.router,      prefix="/api")
+app.include_router(coupons.router,              prefix="/api")
+app.include_router(order_enhancements.router,   prefix="/api")
 app.include_router(payment_enhancements.router, prefix="/api")
-app.include_router(wallet.router, prefix="/api")
+app.include_router(wallet.router,               prefix="/api")
 
-# Enterprise Features - Admin APIs
-app.include_router(admin_orders_advanced.router, prefix="/api")
-app.include_router(admin_payments_advanced.router, prefix="/api")
-app.include_router(admin_users_advanced.router, prefix="/api")
+# ── Enterprise — Admin ─────────────────────────────────────────────
+app.include_router(admin_orders_advanced.router,   prefix="/api")
+app.include_router(admin_payments_advanced.router,  prefix="/api")
+app.include_router(admin_users_advanced.router,     prefix="/api")
 
+# ── Homepage Sections (smart product categoriser) ──────────────────
+app.include_router(homepage_sections.router, prefix="/api")
+# Endpoint: GET /api/homepage/sections
 
-# ======================================================
-# STARTUP (AUTO DB MIGRATION SAFE FOR RENDER FREE)
-# ======================================================
 
 @app.on_event("startup")
 def startup():
-    """
-    Runs automatically on server start.
-
-    Guarantees:
-    - All tables exist
-    - Admin account exists
-    - Missing columns are auto-created (Render-safe)
-    """
-
-    # Create tables if missing
     init_database()
-
     db = SessionLocal()
-
     try:
-        # Ensure admin exists
         ensure_admin_exists(db)
-
-        # -------------------------------------------------
-        # 🔥 AUTO FIX ORDERS TABLE (Checkout Fix)
-        # -------------------------------------------------
-
-        db.execute(text("""
-            ALTER TABLE orders
-            ADD COLUMN IF NOT EXISTS notes TEXT
-        """))
-
-        db.execute(text("""
-            ALTER TABLE orders
-            ADD COLUMN IF NOT EXISTS shipping_address JSON
-        """))
-
-        db.execute(text("""
-            ALTER TABLE orders
-            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE
-        """))
-
-        # -------------------------------------------------
-        # 🔥 ENTERPRISE FEATURES - ORDERS TABLE ENHANCEMENTS
-        # -------------------------------------------------
-
-        db.execute(text("""
-            ALTER TABLE orders
-            ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE
-        """))
-
-        db.execute(text("""
-            ALTER TABLE orders
-            ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE
-        """))
-
-        # -------------------------------------------------
-        # 🔥 BACKFILL NULL is_deleted → FALSE (Critical Fix)
-        # Rows inserted before the column existed have NULL,
-        # which breaks  is_deleted == False  filters in PostgreSQL.
-        # -------------------------------------------------
-
-        db.execute(text("""
-            UPDATE products SET is_deleted = FALSE WHERE is_deleted IS NULL
-        """))
-
-        db.execute(text("""
-            UPDATE orders SET is_deleted = FALSE WHERE is_deleted IS NULL
-        """))
-
+        db.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS notes TEXT"))
+        db.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_address JSON"))
+        db.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE"))
+        db.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE"))
+        db.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE"))
+        db.execute(text("UPDATE products SET is_deleted = FALSE WHERE is_deleted IS NULL"))
+        db.execute(text("UPDATE orders   SET is_deleted = FALSE WHERE is_deleted IS NULL"))
         db.commit()
-
-        print("✅ Database schema verified successfully")
+        print("✅ Database schema verified")
         print("🚀 Enterprise features initialized")
-
+        print("🏠 Homepage sections → GET /api/homepage/sections")
     except Exception as e:
         print("❌ Startup migration failed:", e)
-
     finally:
         db.close()
