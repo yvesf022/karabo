@@ -15,7 +15,7 @@ Endpoint: GET /api/homepage/sections
 """
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 # ✅ FIX 1: Added `func` — was missing, caused runtime crash on ORDER BY RANDOM()
 from sqlalchemy import desc, func
 from typing import Optional
@@ -185,11 +185,10 @@ def _classify(product: Product) -> str:
 
 
 def _card(p: Product) -> dict:
-    # ✅ FIX 2: Guarantee main_image is never null — try primary first, then first image
+    # Try primary image first, then any image, then None
     img = next((i.image_url for i in p.images if i.is_primary), None)
     if not img and p.images:
         img = p.images[0].image_url
-    # Skip products where we truly have no image URL string
     disc = None
     if p.compare_price and p.compare_price > p.price > 0:
         disc = round(((p.compare_price - p.price) / p.compare_price) * 100)
@@ -211,11 +210,10 @@ def _card(p: Product) -> dict:
 
 
 def _active(db: Session):
-    """Only return active, non-deleted products that have at least one image."""
-    return db.query(Product).filter(
+    """Only return active, non-deleted products."""
+    return db.query(Product).options(selectinload(Product.images)).filter(
         Product.status == "active",
         Product.is_deleted == False,
-        Product.images.any(),
     )
 
 
@@ -261,11 +259,11 @@ def homepage_sections(db: Session = Depends(get_db)):
             "products": [_card(p) for p in new],
         })
 
-    # 3 — Best Sellers
+    # 3 — Best Sellers (sort by rating_number when sales=0, which is common for new stores)
     best = (
         _active(db)
-        .filter(Product.sales > 0, Product.stock > 0)
-        .order_by(Product.sales.desc())
+        .filter(Product.stock > 0)
+        .order_by(Product.sales.desc(), Product.rating_number.desc())
         .limit(SECTION_LIMIT)
         .all()
     )
@@ -308,9 +306,6 @@ def homepage_sections(db: Session = Depends(get_db)):
     buckets: dict[str, list] = {}
     for p in all_products:
         card = _card(p)
-        # ✅ FIX 4: Only add product to bucket if it has a real image URL
-        if not card["main_image"]:
-            continue
         name = _classify(p)
         if name not in buckets:
             buckets[name] = []

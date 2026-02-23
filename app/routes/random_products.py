@@ -30,7 +30,7 @@ Algorithm (PostgreSQL):
 """
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func, text
 from typing import Optional
 
@@ -80,7 +80,7 @@ def _card(p: Product) -> dict:
 # ─────────────────────────────────────────────────────────────────
 
 def _base(db: Session, with_images: bool = True, exclude_ids: list[str] | None = None):
-    q = db.query(Product).filter(
+    q = db.query(Product).options(selectinload(Product.images)).filter(
         Product.status     == "active",
         Product.is_deleted == False,
         Product.stock      > 0,

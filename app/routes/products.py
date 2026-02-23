@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func, or_
 from typing import Optional
 import csv
@@ -105,7 +105,7 @@ def list_products(
     page:          int = Query(1, ge=1),
     per_page:      int = Query(20, ge=1, le=100),
 ):
-    query = db.query(Product).filter(
+    query = db.query(Product).options(selectinload(Product.images)).filter(
         Product.status == "active",
         Product.is_deleted == False,
     )
@@ -205,7 +205,7 @@ def admin_list_products(
     page:            int = Query(1, ge=1),
     per_page:        int = Query(50, ge=1, le=200),
 ):
-    query = db.query(Product)
+    query = db.query(Product).options(selectinload(Product.images))
     if not include_deleted:
         query = query.filter(Product.is_deleted == False)
     if search:
@@ -924,7 +924,7 @@ def export_products(
     category: Optional[str] = None,
     include_deleted: bool = False,
 ):
-    query = db.query(Product)
+    query = db.query(Product).options(selectinload(Product.images))
     if not include_deleted:
         query = query.filter(Product.is_deleted == False)
     if status:
@@ -1104,7 +1104,7 @@ def delete_image(image_id: str, db: Session = Depends(get_db)):
 
 @router.get("/{product_id}")
 def get_product(product_id: str, db: Session = Depends(get_db)):
-    product = db.query(Product).filter(
+    product = db.query(Product).options(selectinload(Product.images)).filter(
         Product.id == product_id,
         Product.status == "active",
         Product.is_deleted == False,

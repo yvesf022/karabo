@@ -143,7 +143,7 @@ class Product(Base):
     deleted_at = Column(DateTime(timezone=True), nullable=True)   # NEW soft-delete
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    images = relationship("ProductImage", back_populates="product", cascade="all, delete-orphan", order_by="ProductImage.position")
+    images = relationship("ProductImage", back_populates="product", cascade="all, delete-orphan", order_by="ProductImage.position", lazy="selectin")
     variants = relationship("ProductVariant", back_populates="product", cascade="all, delete-orphan")  # NEW
     store_ref = relationship("Store", back_populates="products", foreign_keys=[store_id])
 
