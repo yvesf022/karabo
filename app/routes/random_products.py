@@ -85,9 +85,8 @@ def _base(db: Session, with_images: bool = True, exclude_ids: list[str] | None =
         Product.is_deleted == False,
         Product.stock      > 0,
     )
-    if with_images:
-        # Only products that have at least one image row
-        q = q.filter(Product.images.any())
+    # Note: we removed the images.any() filter — products may have images stored
+    # differently and filtering here was causing empty results for new stores.
     if exclude_ids:
         q = q.filter(Product.id.notin_(exclude_ids))
     return q
