@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import desc, func
 from typing import Optional
 import re
+import time  # ✅ required for cache
 
 from app.database import get_db
 from app.models import Product
@@ -29,6 +30,10 @@ router = APIRouter(prefix="/homepage", tags=["homepage"])
 SECTION_LIMIT    = 12
 MIN_SECTION_SIZE = 3
 MAX_CAT_SECTIONS = 12
+CACHE_TTL        = 300  # cache homepage for 5 minutes
+
+# ✅ module-level cache — resets on every server restart
+_sections_cache: dict = {"data": None, "ts": 0.0}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # KEYWORD TAXONOMY  —  (section_name, [keywords])
@@ -158,29 +163,8 @@ TAXONOMY: list[tuple[str, list[str]]] = [
 ]
 
 
-# ── Anchor keywords: if ANY of these match, the product is locked to that category
-# regardless of how many times "camera" or other words appear in the description.
-# This prevents phones (which always mention cameras in specs) leaking into Cameras section.
-ANCHOR_LOCKS: list[tuple[str, list[str]]] = [
-    ("Smartphones & Phones", [
-        "iphone", "samsung galaxy", "android phone", "mobile phone", "cell phone",
-        "smartphone", "tecno", "infinix", "itel", "redmi", "oneplus", "oppo", "vivo",
-        "moto g", "moto e", "motorola moto", "pixel phone", "nokia phone",
-    ]),
-    ("Tablets & iPads",   ["ipad", "android tablet", "fire hd", "kindle fire"]),
-    ("Laptops & Computers", ["macbook", "chromebook", "gaming laptop", "laptop computer"]),
-    ("Smartwatches",      ["smartwatch", "smart watch", "fitness tracker", "smart band"]),
-]
-
-
 def _classify(product: Product) -> str:
-    """Classify a product into a taxonomy section using keyword scoring.
-
-    Anchor-lock pass runs first: if a high-signal keyword is present the
-    product is immediately assigned its locked category and scoring is skipped.
-    This prevents phones (whose descriptions are full of camera/display/speaker
-    keywords) from bleeding into the wrong sections.
-    """
+    """Classify a product into a taxonomy section using keyword scoring."""
     haystack = " ".join(filter(None, [
         product.category or "",
         product.main_category or "",
@@ -190,13 +174,6 @@ def _classify(product: Product) -> str:
     ])).lower()
     haystack = re.sub(r"[^\w\s]", " ", haystack)
 
-    # 1 ── Anchor-lock pass (exact substring, no word-boundary needed for phrases)
-    for locked_name, anchors in ANCHOR_LOCKS:
-        for anchor in anchors:
-            if anchor in haystack:
-                return locked_name
-
-    # 2 ── Normal scoring pass
     best: Optional[str] = None
     top_score = 0
 

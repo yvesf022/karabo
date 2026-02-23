@@ -111,20 +111,42 @@ def startup():
         db.execute(text("UPDATE products SET is_deleted = FALSE WHERE is_deleted IS NULL"))
         db.execute(text("UPDATE orders   SET is_deleted = FALSE WHERE is_deleted IS NULL"))
 
-        # ✅ BUG FIX: Backfill main_image for all existing products where it is NULL.
-        # The CSV importer previously never set this column, so every store page card
-        # was falling back to a per-product join. This one-time migration sets
-        # main_image from the first (lowest position) image in product_images.
+        # ✅ Backfill main_image for all products where it is NULL
+        # (products imported before this column was populated)
+        # Using correct PostgreSQL syntax — no table alias on UPDATE
         db.execute(text("""
-            UPDATE products p
+            UPDATE products
             SET main_image = (
-                SELECT pi.image_url
-                FROM product_images pi
-                WHERE pi.product_id = p.id
-                ORDER BY pi.position ASC, pi.is_primary DESC
+                SELECT image_url
+                FROM product_images
+                WHERE product_images.product_id = products.id
+                ORDER BY position ASC
                 LIMIT 1
             )
-            WHERE p.main_image IS NULL OR p.main_image = ''
+            WHERE (main_image IS NULL OR main_image = '')
+              AND EXISTS (
+                SELECT 1 FROM product_images
+                WHERE product_images.product_id = products.id
+              )
+        """))
+
+        # ✅ Backfill is_primary — mark first image (position=0) as primary
+        # for all products where no image is marked primary yet
+        db.execute(text("""
+            UPDATE product_images pi
+            SET is_primary = TRUE
+            FROM (
+                SELECT DISTINCT ON (product_id) id
+                FROM product_images
+                ORDER BY product_id, position ASC
+            ) first_imgs
+            WHERE pi.id = first_imgs.id
+              AND pi.is_primary = FALSE
+              AND NOT EXISTS (
+                SELECT 1 FROM product_images pi2
+                WHERE pi2.product_id = pi.product_id
+                  AND pi2.is_primary = TRUE
+              )
         """))
 
         db.commit()
