@@ -2,11 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func, or_
+from datetime import datetime, timezone
 from typing import Optional
 import csv
 import io
 import json
-from datetime import datetime, timezone
 
 from app.database import get_db
 from app.models import (
@@ -76,6 +76,8 @@ def _serialize_product(p: Product, admin: bool = False) -> dict:
     if admin:
         data["is_deleted"] = p.is_deleted
         data["deleted_at"] = p.deleted_at
+        data["is_priced"]  = p.is_priced
+        data["priced_at"]  = p.priced_at
     return data
 
 
@@ -273,6 +275,149 @@ def admin_list_products(
         "stats":    stats,
         "results":  [_serialize_product(p, admin=True) for p in products],
     }
+
+
+# ─────────────────────────────────────────────
+# PRICING TOOL: LIST ALL PRODUCTS (no page cap)
+# Returns every product so the tool never misses one.
+# Lightweight payload — only fields the pricing UI needs.
+# ─────────────────────────────────────────────
+
+@router.get("/admin/pricing/all", dependencies=[Depends(require_admin)])
+def pricing_all_products(
+    db: Session = Depends(get_db),
+    search:   Optional[str] = None,
+    category: Optional[str] = None,
+    brand:    Optional[str] = None,
+):
+    """
+    Return ALL non-deleted products for the pricing tool.
+    No per_page limit — streams the full catalogue in one shot.
+    The frontend groups by is_priced so already-priced products
+    are clearly separated from the unpriced ones.
+    """
+    query = (
+        db.query(
+            Product.id,
+            Product.title,
+            Product.brand,
+            Product.category,
+            Product.price,
+            Product.compare_price,
+            Product.stock,
+            Product.status,
+            Product.is_priced,
+            Product.priced_at,
+            Product.main_image,
+            Product.image_url,
+        )
+        .filter(Product.is_deleted == False)
+    )
+
+    if search:
+        q = f"%{search}%"
+        query = query.filter(
+            or_(Product.title.ilike(q), Product.brand.ilike(q), Product.sku.ilike(q))
+        )
+    if category:
+        query = query.filter(Product.category == category)
+    if brand:
+        query = query.filter(Product.brand == brand)
+
+    # Unpriced first, then alphabetical
+    query = query.order_by(Product.is_priced.asc(), Product.title.asc())
+
+    rows = query.all()
+
+    return {
+        "total":    len(rows),
+        "unpriced": sum(1 for r in rows if not r.is_priced),
+        "priced":   sum(1 for r in rows if r.is_priced),
+        "results": [
+            {
+                "id":            str(r.id),
+                "title":         r.title,
+                "brand":         r.brand,
+                "category":      r.category,
+                "price":         r.price,
+                "compare_price": r.compare_price,
+                "stock":         r.stock,
+                "status":        r.status,
+                "is_priced":     r.is_priced,
+                "priced_at":     r.priced_at,
+                "main_image":    r.main_image or r.image_url,
+            }
+            for r in rows
+        ],
+    }
+
+
+# ─────────────────────────────────────────────
+# PRICING TOOL: MARK ONE PRODUCT AS PRICED / UNPRICED
+# ─────────────────────────────────────────────
+
+@router.patch("/admin/pricing/{product_id}/mark", dependencies=[Depends(require_admin)])
+def mark_product_priced(
+    product_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    """
+    Set is_priced = True/False on a product.
+    Called when the admin clicks "Mark Priced" or "Reset".
+    payload: { "is_priced": bool }
+    """
+    product = db.query(Product).filter(
+        Product.id == product_id,
+        Product.is_deleted == False,
+    ).first()
+    if not product:
+        raise HTTPException(404, "Product not found")
+
+    is_priced = bool(payload.get("is_priced", True))
+    product.is_priced = is_priced
+    product.priced_at = func.now() if is_priced else None
+
+    _log(db, admin, "mark_priced", "product", product_id,
+         meta={"is_priced": is_priced})
+    db.commit()
+    return {"id": product_id, "is_priced": is_priced}
+
+
+# ─────────────────────────────────────────────
+# PRICING TOOL: BULK MARK PRICED (after bulk price save)
+# ─────────────────────────────────────────────
+
+@router.post("/admin/pricing/bulk-mark", dependencies=[Depends(require_admin)])
+def bulk_mark_priced(
+    payload: dict,
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    """
+    Mark multiple products as priced in one DB round-trip.
+    Called automatically after a successful bulk price save.
+    payload: { "product_ids": ["uuid1", "uuid2", ...], "is_priced": bool }
+    """
+    ids       = payload.get("product_ids", [])
+    is_priced = bool(payload.get("is_priced", True))
+
+    if not ids:
+        return {"updated": 0}
+
+    now = datetime.now(timezone.utc)
+    updated = (
+        db.query(Product)
+        .filter(Product.id.in_(ids), Product.is_deleted == False)
+        .all()
+    )
+    for p in updated:
+        p.is_priced = is_priced
+        p.priced_at = now if is_priced else None
+
+    db.commit()
+    return {"updated": len(updated), "is_priced": is_priced}
 
 
 # ─────────────────────────────────────────────

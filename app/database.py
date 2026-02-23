@@ -179,6 +179,8 @@ def init_database():
         add_column_if_missing("products", "low_stock_threshold", "INTEGER DEFAULT 10")
         add_column_if_missing("products", "is_deleted",          "BOOLEAN NOT NULL DEFAULT FALSE")
         add_column_if_missing("products", "deleted_at",          "TIMESTAMPTZ")
+        add_column_if_missing("products", "is_priced",           "BOOLEAN NOT NULL DEFAULT FALSE")
+        add_column_if_missing("products", "priced_at",           "TIMESTAMPTZ")
         add_column_if_missing("products", "store_id",
             "UUID REFERENCES stores(id) ON DELETE SET NULL")
 

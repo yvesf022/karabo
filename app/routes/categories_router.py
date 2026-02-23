@@ -93,7 +93,7 @@ def get_categories() -> JSONResponse:
             row = db.execute(text("""
                 SELECT COALESCE(main_image, image_url) as img
                 FROM products
-                WHERE matched_category = :key
+                WHERE category = :key
                   AND is_deleted = FALSE
                   AND COALESCE(main_image, image_url) IS NOT NULL
                 ORDER BY rating DESC NULLS LAST
@@ -126,7 +126,7 @@ def get_categories() -> JSONResponse:
             row = db.execute(text("""
                 SELECT COALESCE(main_image, image_url) as img
                 FROM products
-                WHERE matched_category = :key
+                WHERE category = :key
                   AND is_deleted = FALSE
                   AND COALESCE(main_image, image_url) IS NOT NULL
                 ORDER BY rating DESC NULLS LAST
@@ -201,7 +201,7 @@ def products_by_department(
 
         count_row = db.execute(text(f"""
             SELECT COUNT(*) FROM products
-            WHERE matched_category IN ({placeholders})
+            WHERE category IN ({placeholders})
               AND is_deleted = FALSE
               AND status = 'active'
         """), bind).fetchone()
@@ -210,11 +210,11 @@ def products_by_department(
         offset = (page - 1) * per_page
         rows = db.execute(text(f"""
             SELECT id, title, price, compare_price, discount_pct, brand,
-                   matched_category as category,
+                   category as category,
                    COALESCE(main_image, image_url) as main_image,
                    rating, rating_number, in_stock, sales
             FROM products
-            WHERE matched_category IN ({placeholders})
+            WHERE category IN ({placeholders})
               AND is_deleted = FALSE
               AND status = 'active'
             ORDER BY {col} {direction} NULLS LAST

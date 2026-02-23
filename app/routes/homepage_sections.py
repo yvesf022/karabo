@@ -30,7 +30,7 @@ router = APIRouter(prefix="/homepage", tags=["homepage"])
 SECTION_LIMIT    = 12
 MIN_SECTION_SIZE = 3
 MAX_CAT_SECTIONS = 12
-CACHE_TTL        = 300  # cache homepage for 5 minutes
+CACHE_TTL        = 600  # cache homepage for 10 minutes
 
 # ✅ module-level cache — resets on every server restart
 _sections_cache: dict = {"data": None, "ts": 0.0}
@@ -230,98 +230,150 @@ def homepage_sections(db: Session = Depends(get_db)):
     if _sections_cache["data"] is not None and (now - _sections_cache["ts"]) < CACHE_TTL:
         return _sections_cache["data"]
 
+    from sqlalchemy import text as _text
+
+    # ── Fast raw SQL card builder (no ORM image join needed) ──────────────────
+    def _sql_card(r) -> dict:
+        price, compare = r[2], r[3]
+        disc = round(((compare - price) / compare) * 100) if compare and compare > price > 0 else None
+        return {
+            "id": str(r[0]), "title": r[1],
+            "price": price, "compare_price": compare, "discount_pct": disc,
+            "brand": r[4], "category": r[5],
+            "rating": r[6], "rating_number": r[7],
+            "sales": r[8], "in_stock": (r[9] or 0) > 0,
+            "main_image": r[10], "images": [],
+        }
+
+    BASE_COLS = """
+        id, title, price, compare_price, brand, category,
+        rating, rating_number, sales, stock,
+        COALESCE(main_image, image_url) AS img
+    """
+    BASE_WHERE = "status = 'active' AND is_deleted = FALSE"
+
     sections: list[dict] = []
 
     # 1 — Flash Deals
-    flash = (
-        _active(db)
-        .filter(
-            Product.compare_price != None,
-            Product.compare_price > Product.price,
-            Product.stock > 0,
-        )
-        .order_by(desc((Product.compare_price - Product.price) / Product.compare_price))
-        .limit(SECTION_LIMIT)
-        .all()
-    )
-    if flash:
+    flash_rows = db.execute(_text(f"""
+        SELECT {BASE_COLS} FROM products
+        WHERE {BASE_WHERE}
+          AND compare_price IS NOT NULL
+          AND compare_price > price
+          AND stock > 0
+        ORDER BY ((compare_price - price) / compare_price) DESC
+        LIMIT :lim
+    """), {"lim": SECTION_LIMIT}).fetchall()
+    if flash_rows:
         sections.append({
             "key": "flash_deals", "title": "Flash Deals",
             "subtitle": "Biggest discounts right now",
             "badge": "SALE", "theme": "red",
             "view_all": "/store?sort=discount",
-            "products": [_card(p) for p in flash],
+            "products": [_sql_card(r) for r in flash_rows],
         })
 
     # 2 — New Arrivals
-    new = (
-        _active(db)
-        .filter(Product.stock > 0)
-        .order_by(Product.created_at.desc())
-        .limit(SECTION_LIMIT)
-        .all()
-    )
-    if new:
+    new_rows = db.execute(_text(f"""
+        SELECT {BASE_COLS} FROM products
+        WHERE {BASE_WHERE} AND stock > 0
+        ORDER BY created_at DESC
+        LIMIT :lim
+    """), {"lim": SECTION_LIMIT}).fetchall()
+    if new_rows:
         sections.append({
             "key": "new_arrivals", "title": "New Arrivals",
             "subtitle": "Fresh styles just landed",
             "badge": "NEW", "theme": "green",
             "view_all": "/store?sort=newest",
-            "products": [_card(p) for p in new],
+            "products": [_sql_card(r) for r in new_rows],
         })
 
-    # 3 — Best Sellers (sort by rating_number when sales=0, which is common for new stores)
-    best = (
-        _active(db)
-        .filter(Product.stock > 0)
-        .order_by(Product.sales.desc(), Product.rating_number.desc())
-        .limit(SECTION_LIMIT)
-        .all()
-    )
-    if best:
+    # 3 — Best Sellers
+    best_rows = db.execute(_text(f"""
+        SELECT {BASE_COLS} FROM products
+        WHERE {BASE_WHERE} AND stock > 0
+        ORDER BY sales DESC NULLS LAST, rating_number DESC NULLS LAST
+        LIMIT :lim
+    """), {"lim": SECTION_LIMIT}).fetchall()
+    if best_rows:
         sections.append({
             "key": "best_sellers", "title": "Best Sellers",
             "subtitle": "What everyone is buying",
             "badge": None, "theme": "gold",
             "view_all": "/store?sort=popular",
-            "products": [_card(p) for p in best],
+            "products": [_sql_card(r) for r in best_rows],
         })
 
     # 4 — Top Rated
-    rated = (
-        _active(db)
-        .filter(Product.rating >= 4.0, Product.rating_number >= 3, Product.stock > 0)
-        .order_by(Product.rating.desc(), Product.rating_number.desc())
-        .limit(SECTION_LIMIT)
-        .all()
-    )
-    if rated:
+    rated_rows = db.execute(_text(f"""
+        SELECT {BASE_COLS} FROM products
+        WHERE {BASE_WHERE}
+          AND rating >= 4.0
+          AND rating_number >= 3
+          AND stock > 0
+        ORDER BY rating DESC NULLS LAST, rating_number DESC NULLS LAST
+        LIMIT :lim
+    """), {"lim": SECTION_LIMIT}).fetchall()
+    if rated_rows:
         sections.append({
             "key": "top_rated", "title": "Top Rated",
             "subtitle": "Highest rated by customers",
             "badge": None, "theme": "gold",
             "view_all": "/store?sort=rating",
-            "products": [_card(p) for p in rated],
+            "products": [_sql_card(r) for r in rated_rows],
         })
 
     # 5-N — Smart Category Sections
-    # ✅ FIX 3: func.random() now works because func is imported above
-    all_products = (
-        _active(db)
-        .filter(Product.stock > 0)
-        .order_by(func.random())
-        .limit(500)
-        .all()
-    )
+    # FAST: raw SQL fetches only the columns we need — no ORM image join.
+    # The old approach used selectinload(Product.images) on 500 rows which
+    # triggered thousands of SQL rows. This single query is ~10x faster.
+    from sqlalchemy import text as _text
+    rows = db.execute(_text("""
+        SELECT id, title, price, compare_price, brand, category,
+               main_category, short_description,
+               COALESCE(main_image, image_url) AS img,
+               rating, rating_number, sales, stock
+        FROM products
+        WHERE status = 'active'
+          AND is_deleted = FALSE
+          AND stock > 0
+        ORDER BY RANDOM()
+        LIMIT 500
+    """)).fetchall()
+
+    # Lightweight duck-typed object so _classify() works unchanged
+    class _P:
+        __slots__ = ("category", "main_category", "title", "brand", "short_description")
+        def __init__(self, r):
+            self.category          = r[5]
+            self.main_category     = r[6]
+            self.title             = r[1]
+            self.brand             = r[4]
+            self.short_description = r[7]
+
+    def _fast_card(r) -> dict:
+        price   = r[2]
+        compare = r[3]
+        disc    = None
+        if compare and compare > price > 0:
+            disc = round(((compare - price) / compare) * 100)
+        return {
+            "id": str(r[0]), "title": r[1],
+            "price": price, "compare_price": compare, "discount_pct": disc,
+            "brand": r[4], "category": r[5],
+            "rating": r[9], "rating_number": r[10],
+            "sales": r[11], "in_stock": (r[12] or 0) > 0,
+            "main_image": r[8], "images": [],
+        }
 
     buckets: dict[str, list] = {}
-    for p in all_products:
-        card = _card(p)
-        name = _classify(p)
+    for row in rows:
+        name = _classify(_P(row))
         if name not in buckets:
             buckets[name] = []
         if len(buckets[name]) < SECTION_LIMIT:
-            buckets[name].append(card)
+            buckets[name].append(_fast_card(row))
 
     sorted_cats = sorted(
         [(n, prods) for n, prods in buckets.items() if len(prods) >= MIN_SECTION_SIZE],
@@ -331,14 +383,17 @@ def homepage_sections(db: Session = Depends(get_db)):
 
     themes = ["forest", "navy", "plum", "teal", "rust", "slate", "olive", "rose", "indigo", "amber", "sage", "stone"]
     for i, (cat, prods) in enumerate(sorted_cats):
-        slug = cat.lower().replace(" & ", " ").replace(" ", "_").replace("&", "and")
+        # IMPORTANT: use ?q= (search) not ?category= (slug filter).
+        # Taxonomy names like "Hair Care" never match DB category slugs like
+        # "shampoo". Search finds products by keyword in title/description
+        # so the View All link always shows real results.
         sections.append({
-            "key": f"cat_{slug}",
-            "title": cat,
+            "key":      f"cat_{i}",
+            "title":    cat,
             "subtitle": f"Shop all {cat.lower()}",
-            "badge": None,
-            "theme": themes[i % len(themes)],
-            "view_all": f"/store?category={cat}",
+            "badge":    None,
+            "theme":    themes[i % len(themes)],
+            "view_all": f"/store?q={cat}",
             "products": prods,
         })
 

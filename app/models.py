@@ -141,8 +141,10 @@ class Product(Base):
     image_url  = Column(String, nullable=True)           # fallback image URL
     store_id = Column(UUID(as_uuid=True), ForeignKey("stores.id", ondelete="SET NULL"), nullable=True, index=True)  # NEW FK
     status = Column(String, default="active", nullable=False)
-    is_deleted = Column(Boolean, default=False, nullable=False)   # NEW soft-delete
-    deleted_at = Column(DateTime(timezone=True), nullable=True)   # NEW soft-delete
+    is_deleted = Column(Boolean, default=False, nullable=False)   # soft-delete
+    deleted_at = Column(DateTime(timezone=True), nullable=True)   # soft-delete
+    is_priced  = Column(Boolean, default=False, nullable=False)   # pricing tool: has been priced/marked by admin
+    priced_at  = Column(DateTime(timezone=True), nullable=True)   # pricing tool: when it was last priced
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     images = relationship("ProductImage", back_populates="product", cascade="all, delete-orphan", order_by="ProductImage.position")

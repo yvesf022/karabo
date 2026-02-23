@@ -122,63 +122,136 @@ def random_products(
         db.execute(text(f"SELECT setseed({normalised:.6f})"))
 
     if diverse:
-        # ── Diverse mode: one product per category, then fill the rest ──
-        # Get distinct categories that have qualifying products
-        cats_q = (
-            _base(db, with_images=with_images, exclude_ids=exclude_ids)
-            .with_entities(Product.category)
-            .filter(Product.category != None)
-            .distinct()
-            .order_by(func.random())
-            .limit(count)
-            .all()
-        )
-        categories = [r[0] for r in cats_q if r[0]]
+        # ── Diverse mode: one random product per category in a SINGLE query ──
+        # Old approach: one DB round-trip per category (40+ sequential queries).
+        # New approach: DISTINCT ON (category) with RANDOM() — one query total.
+        exclude_clause = ""
+        bind: dict = {"lim": count}
+        if exclude_ids:
+            placeholders = ",".join(f":ex_{i}" for i in range(len(exclude_ids)))
+            exclude_clause = f"AND id NOT IN ({placeholders})"
+            for i, eid in enumerate(exclude_ids):
+                bind[f"ex_{i}"] = eid
 
-        seen_ids: set = set()
-        result: list[Product] = []
+        img_clause = "AND COALESCE(main_image, image_url) IS NOT NULL" if with_images else ""
 
-        # One random product per category
-        for cat in categories:
-            if len(result) >= count:
-                break
-            p = (
-                _base(db, with_images=with_images, exclude_ids=exclude_ids)
-                .filter(Product.category == cat)
-                .order_by(func.random())
-                .first()
+        # Apply seed
+        if seed is not None:
+            normalised = ((seed % 10000) / 10000.0) * 2 - 1
+            db.execute(text(f"SELECT setseed({normalised:.6f})"))
+
+        # One random product per category, then fill remaining slots
+        diverse_rows = db.execute(text(f"""
+            WITH ranked AS (
+                SELECT id, title, price, compare_price, brand, category,
+                       main_category, short_description, stock, sales,
+                       rating, rating_number,
+                       COALESCE(main_image, image_url) AS main_image,
+                       created_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY category
+                           ORDER BY RANDOM()
+                       ) AS rn
+                FROM products
+                WHERE status = 'active'
+                  AND is_deleted = FALSE
+                  AND stock > 0
+                  AND category IS NOT NULL
+                  {img_clause}
+                  {exclude_clause}
             )
-            if p and p.id not in seen_ids:
-                result.append(p)
-                seen_ids.add(p.id)
+            SELECT id, title, price, compare_price, brand, category,
+                   main_category, short_description, stock, sales,
+                   rating, rating_number, main_image, created_at
+            FROM ranked
+            WHERE rn = 1
+            ORDER BY RANDOM()
+            LIMIT :lim
+        """), bind).fetchall()
 
-        # Fill remaining slots with any random products not already chosen
-        if len(result) < count:
-            extra_exclude = exclude_ids + [str(p.id) for p in result]
-            extras = (
-                _base(db, with_images=with_images, exclude_ids=extra_exclude)
-                .order_by(func.random())
-                .limit(count - len(result))
-                .all()
-            )
-            result.extend(extras)
+        def _row_card(r) -> dict:
+            price, compare = r[2], r[3]
+            disc = round(((compare - price) / compare) * 100) if compare and compare > price > 0 else None
+            return {
+                "id": str(r[0]), "title": r[1],
+                "price": price, "compare_price": compare, "discount_pct": disc,
+                "brand": r[4], "category": r[5], "main_category": r[6],
+                "short_description": r[7], "stock": r[8], "sales": r[9],
+                "rating": r[10], "rating_number": r[11],
+                "in_stock": (r[8] or 0) > 0,
+                "main_image": r[12], "images": [],
+                "created_at": str(r[13]) if r[13] else None,
+            }
 
+        products_out = [_row_card(r) for r in diverse_rows]
+
+        # If we got fewer than count (fewer categories than requested), fill with randoms
+        if len(products_out) < count:
+            seen = {r[0] for r in diverse_rows}
+            seen_str = ", ".join(f":seen_{i}" for i in range(len(seen)))
+            extra_bind: dict = {"lim2": count - len(products_out)}
+            extra_where = ""
+            if seen:
+                extra_where = f"AND id NOT IN ({seen_str})"
+                for i, sid in enumerate(seen):
+                    extra_bind[f"seen_{i}"] = sid
+            extra_rows = db.execute(text(f"""
+                SELECT id, title, price, compare_price, brand, category,
+                       main_category, short_description, stock, sales,
+                       rating, rating_number,
+                       COALESCE(main_image, image_url) AS main_image,
+                       created_at
+                FROM products
+                WHERE status = 'active' AND is_deleted = FALSE AND stock > 0
+                  {img_clause} {extra_where}
+                ORDER BY RANDOM()
+                LIMIT :lim2
+            """), extra_bind).fetchall()
+            products_out.extend(_row_card(r) for r in extra_rows)
+
+        return {"count": len(products_out), "products": products_out}
+
+    # ── Non-diverse: simple random sample ────────────────────────────────────
+    img_clause = "AND COALESCE(main_image, image_url) IS NOT NULL" if with_images else ""
+    exc_clause = ""
+    bind2: dict = {"lim": count}
+    if exclude_ids:
+        ph = ",".join(f":ex_{i}" for i in range(len(exclude_ids)))
+        exc_clause = f"AND id NOT IN ({ph})"
+        for i, eid in enumerate(exclude_ids):
+            bind2[f"ex_{i}"] = eid
+
+    simple_rows = db.execute(text(f"""
+        SELECT id, title, price, compare_price, brand, category,
+               main_category, short_description, stock, sales,
+               rating, rating_number,
+               COALESCE(main_image, image_url) AS main_image,
+               created_at
+        FROM products
+        WHERE status = 'active'
+          AND is_deleted = FALSE
+          AND stock > 0
+          {img_clause}
+          {exc_clause}
+        ORDER BY RANDOM()
+        LIMIT :lim
+    """), bind2).fetchall()
+
+    def _row_card2(r) -> dict:
+        price, compare = r[2], r[3]
+        disc = round(((compare - price) / compare) * 100) if compare and compare > price > 0 else None
         return {
-            "count":    len(result),
-            "products": [_card(p) for p in result],
+            "id": str(r[0]), "title": r[1],
+            "price": price, "compare_price": compare, "discount_pct": disc,
+            "brand": r[4], "category": r[5], "main_category": r[6],
+            "short_description": r[7], "stock": r[8], "sales": r[9],
+            "rating": r[10], "rating_number": r[11],
+            "in_stock": (r[8] or 0) > 0,
+            "main_image": r[12], "images": [],
+            "created_at": str(r[13]) if r[13] else None,
         }
 
-    products = (
-        _base(db, with_images=with_images, exclude_ids=exclude_ids)
-        .order_by(func.random())
-        .limit(count)
-        .all()
-    )
-
-    return {
-        "count":    len(products),
-        "products": [_card(p) for p in products],
-    }
+    return {"count": len(simple_rows), "products": [_row_card2(r) for r in simple_rows]}
 
 
 # ─────────────────────────────────────────────────────────────────
