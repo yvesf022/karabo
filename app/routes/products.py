@@ -1464,17 +1464,20 @@ def list_variants(product_id: str, db: Session = Depends(get_db)):
     ).all()
     return [
         {
-            "id":           str(v.id),
-            "title":        v.title,
-            "sku":          v.sku,
-            "attributes":   v.attributes,
-            "price":        v.price,
+            "id":            str(v.id),
+            "product_id":    str(v.product_id),
+            "title":         v.title,
+            "sku":           v.sku,
+            "attributes":    v.attributes,
+            "price":         v.price,
             "compare_price": v.compare_price,
-            "stock":        v.stock,
-            "in_stock":     v.stock > 0,
-            "image_url":    v.image_url,
-            "is_active":    v.is_active,
-            "created_at":   v.created_at,
+            "stock":         v.stock,
+            "in_stock":      v.stock > 0,
+            "image_url":     v.image_url,
+            "is_active":     v.is_active,
+            "is_deleted":    v.is_deleted,
+            "created_at":    v.created_at,
+            "updated_at":    v.updated_at,
         }
         for v in variants
     ]
