@@ -156,3 +156,91 @@ def get_categories() -> JSONResponse:
 
     finally:
         db.close()
+
+
+# ── Beauty & Personal Care — all products ──────────────────────────────
+BEAUTY_SLUGS = [
+    "moisturizer","sunscreen","face_wash","serum","body_lotion","face_mask",
+    "eye_mask","anti_acne","skin_brightening","collagen","skin_natural_oils",
+    "herbal_oils","anti_wrinkles","body_wash","exfoliator","lip_mask",
+]
+PHONE_SLUGS = ["samsung","apple","xiaomi","motorola","oneplus","google","realme"]
+
+
+@router.get("/products/by-department/{dept}")
+def products_by_department(
+    dept: str,
+    page: int = 1,
+    per_page: int = 40,
+    sort_by: str = "rating",
+    sort_order: str = "desc",
+) -> JSONResponse:
+    """
+    GET /api/products/by-department/beauty?page=1&per_page=40
+    GET /api/products/by-department/phones?page=1&per_page=40
+
+    Returns products belonging to a department (all beauty or all phone subcategories).
+    Used by the StoreClient when user clicks "View All Beauty / Phones".
+    """
+    if dept == "beauty":
+        slugs = BEAUTY_SLUGS
+    elif dept == "phones":
+        slugs = PHONE_SLUGS
+    else:
+        return JSONResponse(content={"results": [], "total": 0, "page": page, "per_page": per_page})
+
+    db = next(get_db())
+    try:
+        placeholders = ", ".join(f":slug_{i}" for i in range(len(slugs)))
+        bind = {f"slug_{i}": s for i, s in enumerate(slugs)}
+
+        # Allowed sort columns whitelist to prevent injection
+        allowed_sort = {"rating", "price", "sales", "created_at"}
+        col = sort_by if sort_by in allowed_sort else "rating"
+        direction = "DESC" if sort_order.lower() == "desc" else "ASC"
+
+        count_row = db.execute(text(f"""
+            SELECT COUNT(*) FROM products
+            WHERE matched_category IN ({placeholders})
+              AND is_deleted = FALSE
+              AND status = 'active'
+        """), bind).fetchone()
+        total = count_row[0] if count_row else 0
+
+        offset = (page - 1) * per_page
+        rows = db.execute(text(f"""
+            SELECT id, title, price, compare_price, discount_pct, brand,
+                   matched_category as category,
+                   COALESCE(main_image, image_url) as main_image,
+                   rating, rating_number, in_stock, sales
+            FROM products
+            WHERE matched_category IN ({placeholders})
+              AND is_deleted = FALSE
+              AND status = 'active'
+            ORDER BY {col} {direction} NULLS LAST
+            LIMIT :limit OFFSET :offset
+        """), {**bind, "limit": per_page, "offset": offset}).fetchall()
+
+        results = [
+            {
+                "id":            str(r[0]),
+                "title":         r[1],
+                "price":         r[2],
+                "compare_price": r[3],
+                "discount_pct":  r[4],
+                "brand":         r[5],
+                "category":      r[6],
+                "main_image":    r[7],
+                "image_url":     r[7],
+                "rating":        r[8],
+                "rating_number": r[9],
+                "in_stock":      r[10],
+                "sales":         r[11],
+            }
+            for r in rows
+        ]
+
+        return JSONResponse(content={"results": results, "total": total, "page": page, "per_page": per_page})
+
+    finally:
+        db.close()
