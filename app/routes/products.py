@@ -166,7 +166,7 @@ def list_products(
                  "category":      p.category,
                  "stock":         p.stock,
                  "in_stock":      p.stock > 0,
-                 "main_image":    next((img.image_url for img in p.images if img.is_primary), None) or (p.images[0].image_url if p.images else None),
+                 "main_image":    getattr(p, "main_image", None) or getattr(p, "image_url", None) or next((img.image_url for img in p.images if img.is_primary), None) or (p.images[0].image_url if p.images else None),
              }
              for p in products
          ],

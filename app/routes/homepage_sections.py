@@ -186,9 +186,10 @@ def _classify(product: Product) -> str:
 
 def _card(p: Product) -> dict:
     # Try primary image first, then any image, then None
-    img = next((i.image_url for i in p.images if i.is_primary), None)
-    if not img and p.images:
-        img = p.images[0].image_url
+    # Use denormalized main_image column first (fastest - no join needed)
+    img = (getattr(p, 'main_image', None) or getattr(p, 'image_url', None)
+           or next((i.image_url for i in p.images if i.is_primary), None)
+           or (p.images[0].image_url if p.images else None))
     disc = None
     if p.compare_price and p.compare_price > p.price > 0:
         disc = round(((p.compare_price - p.price) / p.compare_price) * 100)

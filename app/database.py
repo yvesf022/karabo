@@ -172,6 +172,8 @@ def init_database():
         add_column_if_missing("products", "details",        "JSON")
         add_column_if_missing("products", "features",       "JSON")
         add_column_if_missing("products", "store",          "VARCHAR")
+        add_column_if_missing("products", "main_image",      "VARCHAR")
+        add_column_if_missing("products", "image_url",       "VARCHAR")
 
         # New columns
         add_column_if_missing("products", "low_stock_threshold", "INTEGER DEFAULT 10")
