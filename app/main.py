@@ -113,14 +113,13 @@ def startup():
 
         # ✅ Backfill main_image for all products where it is NULL
         # (products imported before this column was populated)
-        # Using correct PostgreSQL syntax — no table alias on UPDATE
         db.execute(text("""
             UPDATE products
             SET main_image = (
                 SELECT image_url
                 FROM product_images
                 WHERE product_images.product_id = products.id
-                ORDER BY position ASC
+                ORDER BY is_primary DESC NULLS LAST, position ASC
                 LIMIT 1
             )
             WHERE (main_image IS NULL OR main_image = '')
@@ -128,6 +127,15 @@ def startup():
                 SELECT 1 FROM product_images
                 WHERE product_images.product_id = products.id
               )
+        """))
+
+        # ✅ Also backfill from image_url column if product_images has nothing
+        # This covers products where image_url was set but product_images table was not populated
+        db.execute(text("""
+            UPDATE products
+            SET main_image = image_url
+            WHERE (main_image IS NULL OR main_image = '')
+              AND (image_url IS NOT NULL AND image_url != '')
         """))
 
         # ✅ Backfill is_primary — mark first image (position=0) as primary

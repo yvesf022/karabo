@@ -420,9 +420,83 @@ def bulk_mark_priced(
     return {"updated": len(updated), "is_priced": is_priced}
 
 
+
 # ─────────────────────────────────────────────
-# ADMIN: CREATE PRODUCT
+# ADMIN: HEAL PRODUCT IMAGES (one-click fix)
+# Backfills main_image for ALL products that are missing it.
+# Safe to call repeatedly — only updates NULL/empty rows.
+# Call this once after any bulk import to guarantee images appear.
 # ─────────────────────────────────────────────
+
+@router.post("/admin/heal-images", dependencies=[Depends(require_admin)])
+def heal_product_images(db: Session = Depends(get_db)):
+    """
+    One-click image backfill. Run after any bulk CSV import.
+    Fixes 3 common cases:
+      1. main_image NULL but product_images table has rows  → pull from product_images
+      2. main_image NULL but image_url column has a value   → copy image_url → main_image
+      3. is_primary not set on any image for a product      → mark position=0 as primary
+    Returns counts of how many products were healed.
+    """
+    from sqlalchemy import text as _t
+
+    # Case 1: pull from product_images table
+    r1 = db.execute(_t("""
+        UPDATE products
+        SET main_image = (
+            SELECT image_url FROM product_images
+            WHERE product_images.product_id = products.id
+            ORDER BY is_primary DESC NULLS LAST, position ASC
+            LIMIT 1
+        )
+        WHERE (main_image IS NULL OR main_image = '')
+          AND EXISTS (
+            SELECT 1 FROM product_images
+            WHERE product_images.product_id = products.id
+              AND (image_url IS NOT NULL AND image_url != '')
+          )
+    """))
+    healed_from_table = r1.rowcount
+
+    # Case 2: copy from image_url column
+    r2 = db.execute(_t("""
+        UPDATE products
+        SET main_image = image_url
+        WHERE (main_image IS NULL OR main_image = '')
+          AND (image_url IS NOT NULL AND image_url != '')
+    """))
+    healed_from_col = r2.rowcount
+
+    # Case 3: fix is_primary flag
+    r3 = db.execute(_t("""
+        UPDATE product_images pi
+        SET is_primary = TRUE
+        FROM (
+            SELECT DISTINCT ON (product_id) id
+            FROM product_images
+            ORDER BY product_id, position ASC
+        ) first_imgs
+        WHERE pi.id = first_imgs.id
+          AND pi.is_primary = FALSE
+          AND NOT EXISTS (
+            SELECT 1 FROM product_images pi2
+            WHERE pi2.product_id = pi.product_id AND pi2.is_primary = TRUE
+          )
+    """))
+    fixed_primary = r3.rowcount
+
+    db.commit()
+
+    total = healed_from_table + healed_from_col
+    return {
+        "message": f"Healed {total} products",
+        "healed_from_product_images_table": healed_from_table,
+        "healed_from_image_url_column":     healed_from_col,
+        "fixed_is_primary_flags":           fixed_primary,
+    }
+
+
+
 
 @router.post("", dependencies=[Depends(require_admin)], status_code=201)
 def create_product(payload: dict, db: Session = Depends(get_db), admin=Depends(require_admin)):
