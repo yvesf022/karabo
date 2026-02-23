@@ -16,10 +16,10 @@ Endpoint: GET /api/homepage/sections
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session, selectinload
+# ✅ FIX 1: Added `func` — was missing, caused runtime crash on ORDER BY RANDOM()
 from sqlalchemy import desc, func
 from typing import Optional
 import re
-import time  # ✅ BUG FIX: was missing — caused NameError crash on every request
 
 from app.database import get_db
 from app.models import Product
@@ -29,10 +29,6 @@ router = APIRouter(prefix="/homepage", tags=["homepage"])
 SECTION_LIMIT    = 12
 MIN_SECTION_SIZE = 3
 MAX_CAT_SECTIONS = 12
-CACHE_TTL        = 300   # ✅ BUG FIX: was missing — caused NameError crash
-
-# ✅ BUG FIX: was missing — caused NameError crash on every request to /api/homepage/sections
-_sections_cache: dict = {"data": None, "ts": 0.0}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # KEYWORD TAXONOMY  —  (section_name, [keywords])
@@ -162,8 +158,29 @@ TAXONOMY: list[tuple[str, list[str]]] = [
 ]
 
 
+# ── Anchor keywords: if ANY of these match, the product is locked to that category
+# regardless of how many times "camera" or other words appear in the description.
+# This prevents phones (which always mention cameras in specs) leaking into Cameras section.
+ANCHOR_LOCKS: list[tuple[str, list[str]]] = [
+    ("Smartphones & Phones", [
+        "iphone", "samsung galaxy", "android phone", "mobile phone", "cell phone",
+        "smartphone", "tecno", "infinix", "itel", "redmi", "oneplus", "oppo", "vivo",
+        "moto g", "moto e", "motorola moto", "pixel phone", "nokia phone",
+    ]),
+    ("Tablets & iPads",   ["ipad", "android tablet", "fire hd", "kindle fire"]),
+    ("Laptops & Computers", ["macbook", "chromebook", "gaming laptop", "laptop computer"]),
+    ("Smartwatches",      ["smartwatch", "smart watch", "fitness tracker", "smart band"]),
+]
+
+
 def _classify(product: Product) -> str:
-    """Classify a product into a taxonomy section using keyword scoring."""
+    """Classify a product into a taxonomy section using keyword scoring.
+
+    Anchor-lock pass runs first: if a high-signal keyword is present the
+    product is immediately assigned its locked category and scoring is skipped.
+    This prevents phones (whose descriptions are full of camera/display/speaker
+    keywords) from bleeding into the wrong sections.
+    """
     haystack = " ".join(filter(None, [
         product.category or "",
         product.main_category or "",
@@ -173,6 +190,13 @@ def _classify(product: Product) -> str:
     ])).lower()
     haystack = re.sub(r"[^\w\s]", " ", haystack)
 
+    # 1 ── Anchor-lock pass (exact substring, no word-boundary needed for phrases)
+    for locked_name, anchors in ANCHOR_LOCKS:
+        for anchor in anchors:
+            if anchor in haystack:
+                return locked_name
+
+    # 2 ── Normal scoring pass
     best: Optional[str] = None
     top_score = 0
 
@@ -304,13 +328,12 @@ def homepage_sections(db: Session = Depends(get_db)):
         })
 
     # 5-N — Smart Category Sections
-    # Reduced from 500 → 200: ORDER BY RANDOM() is a full table scan,
-    # smaller limit = significantly faster response time
+    # ✅ FIX 3: func.random() now works because func is imported above
     all_products = (
         _active(db)
         .filter(Product.stock > 0)
         .order_by(func.random())
-        .limit(200)
+        .limit(500)
         .all()
     )
 

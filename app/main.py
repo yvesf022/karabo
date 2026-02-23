@@ -110,6 +110,23 @@ def startup():
         db.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE"))
         db.execute(text("UPDATE products SET is_deleted = FALSE WHERE is_deleted IS NULL"))
         db.execute(text("UPDATE orders   SET is_deleted = FALSE WHERE is_deleted IS NULL"))
+
+        # ✅ BUG FIX: Backfill main_image for all existing products where it is NULL.
+        # The CSV importer previously never set this column, so every store page card
+        # was falling back to a per-product join. This one-time migration sets
+        # main_image from the first (lowest position) image in product_images.
+        db.execute(text("""
+            UPDATE products p
+            SET main_image = (
+                SELECT pi.image_url
+                FROM product_images pi
+                WHERE pi.product_id = p.id
+                ORDER BY pi.position ASC, pi.is_primary DESC
+                LIMIT 1
+            )
+            WHERE p.main_image IS NULL OR p.main_image = ''
+        """))
+
         db.commit()
         print("✅ Database schema verified")
         print("🚀 Enterprise features initialized")
