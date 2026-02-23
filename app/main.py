@@ -32,6 +32,7 @@ from app.routes import (
     homepage_sections,          # ← Smart homepage sections
     random_products,            # ← Random products endpoint
 )
+from app.routers import categories as categories_router   # ← Dynamic category images
 
 
 app = FastAPI(title="Karabo API", version="1.0.0")
@@ -87,6 +88,10 @@ app.include_router(homepage_sections.router, prefix="/api")
 
 # ── Random Products (hero grid, discovery carousels) ───────────────
 app.include_router(random_products.router, prefix="/api")
+
+# ── Dynamic Category Images (beauty subcats + phone brands) ────────
+app.include_router(categories_router.router, prefix="/api")
+# Endpoint: GET /api/categories/departments
 # Endpoints:
 #   GET /api/products/random?count=20&with_images=true&seed=<int>&exclude=id1,id2
 #   GET /api/products/random/categories?per_category=6&max_cats=12
