@@ -32,7 +32,7 @@ from app.routes import (
     homepage_sections,          # ← Smart homepage sections
     random_products,            # ← Random products endpoint
 )
-from app.routers import categories as categories_router   # ← Dynamic category images
+from app.routes import categories_router as categories_router   # ← Dynamic category images
 
 
 app = FastAPI(title="Karabo API", version="1.0.0")
