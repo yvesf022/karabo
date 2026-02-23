@@ -91,10 +91,11 @@ def get_categories() -> JSONResponse:
         beauty_subs = []
         for key, label in BEAUTY_SUBCATS:
             row = db.execute(text("""
-                SELECT image_url FROM products
+                SELECT COALESCE(main_image, image_url) as img
+                FROM products
                 WHERE matched_category = :key
-                  AND status = 'active'
-                  AND image_url IS NOT NULL
+                  AND is_deleted = FALSE
+                  AND COALESCE(main_image, image_url) IS NOT NULL
                 ORDER BY rating DESC NULLS LAST
                 LIMIT 1
             """), {"key": key}).fetchone()
@@ -123,10 +124,11 @@ def get_categories() -> JSONResponse:
         phone_subs = []
         for key, label in PHONE_SUBCATS:
             row = db.execute(text("""
-                SELECT image_url FROM products
+                SELECT COALESCE(main_image, image_url) as img
+                FROM products
                 WHERE matched_category = :key
-                  AND status = 'active'
-                  AND image_url IS NOT NULL
+                  AND is_deleted = FALSE
+                  AND COALESCE(main_image, image_url) IS NOT NULL
                 ORDER BY rating DESC NULLS LAST
                 LIMIT 1
             """), {"key": key}).fetchone()
