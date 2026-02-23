@@ -756,6 +756,9 @@ async def bulk_upload_products(
                     db.flush()
                     for pos, url in enumerate(image_urls[:10]):
                         db.add(ProductImage(product_id=product.id, image_url=url, position=pos, is_primary=(pos == 0)))
+                    # ✅ BUG FIX: main_image column was never set — _card() fell back to slow
+                    # relationship join on every product. Now fast path works correctly.
+                    existing.main_image = image_urls[0]
             else:
                 # Insert new product
                 product = Product(
@@ -788,6 +791,9 @@ async def bulk_upload_products(
                 image_urls = [u.strip() for u in (row.get("image_urls") or "").split(",") if u.strip()]
                 for pos, url in enumerate(image_urls[:10]):
                     db.add(ProductImage(product_id=product.id, image_url=url, position=pos, is_primary=(pos == 0)))
+                # ✅ BUG FIX: main_image column was never set on new products either
+                if image_urls:
+                    product.main_image = image_urls[0]
 
             db.commit()
             successful += 1

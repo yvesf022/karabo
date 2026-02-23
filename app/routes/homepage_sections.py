@@ -16,10 +16,10 @@ Endpoint: GET /api/homepage/sections
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session, selectinload
-# ✅ FIX 1: Added `func` — was missing, caused runtime crash on ORDER BY RANDOM()
 from sqlalchemy import desc, func
 from typing import Optional
 import re
+import time  # ✅ BUG FIX: was missing — caused NameError crash on every request
 
 from app.database import get_db
 from app.models import Product
@@ -29,6 +29,10 @@ router = APIRouter(prefix="/homepage", tags=["homepage"])
 SECTION_LIMIT    = 12
 MIN_SECTION_SIZE = 3
 MAX_CAT_SECTIONS = 12
+CACHE_TTL        = 300   # ✅ BUG FIX: was missing — caused NameError crash
+
+# ✅ BUG FIX: was missing — caused NameError crash on every request to /api/homepage/sections
+_sections_cache: dict = {"data": None, "ts": 0.0}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # KEYWORD TAXONOMY  —  (section_name, [keywords])
@@ -300,12 +304,13 @@ def homepage_sections(db: Session = Depends(get_db)):
         })
 
     # 5-N — Smart Category Sections
-    # ✅ FIX 3: func.random() now works because func is imported above
+    # Reduced from 500 → 200: ORDER BY RANDOM() is a full table scan,
+    # smaller limit = significantly faster response time
     all_products = (
         _active(db)
         .filter(Product.stock > 0)
         .order_by(func.random())
-        .limit(500)
+        .limit(200)
         .all()
     )
 
