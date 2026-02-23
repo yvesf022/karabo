@@ -26,7 +26,7 @@ from app.models import Product
 
 router = APIRouter(prefix="/homepage", tags=["homepage"])
 
-SECTION_LIMIT    = 16
+SECTION_LIMIT    = 12
 MIN_SECTION_SIZE = 3
 MAX_CAT_SECTIONS = 12
 
@@ -219,6 +219,11 @@ def _active(db: Session):
 
 @router.get("/sections")
 def homepage_sections(db: Session = Depends(get_db)):
+    global _sections_cache
+    now = time.time()
+    if _sections_cache["data"] is not None and (now - _sections_cache["ts"]) < CACHE_TTL:
+        return _sections_cache["data"]
+
     sections: list[dict] = []
 
     # 1 — Flash Deals
@@ -299,7 +304,7 @@ def homepage_sections(db: Session = Depends(get_db)):
         _active(db)
         .filter(Product.stock > 0)
         .order_by(func.random())
-        .limit(2000)
+        .limit(500)
         .all()
     )
 
@@ -331,4 +336,7 @@ def homepage_sections(db: Session = Depends(get_db)):
             "products": prods,
         })
 
-    return {"sections": sections, "total_sections": len(sections)}
+    result = {"sections": sections, "total_sections": len(sections)}
+    _sections_cache["data"] = result
+    _sections_cache["ts"]   = time.time()
+    return result

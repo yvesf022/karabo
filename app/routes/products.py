@@ -153,29 +153,24 @@ def list_products(
         "page":     page,
         "per_page": per_page,
         "pages":    (total + per_page - 1) // per_page,
-        "results": [
-            {
-                "id":                str(p.id),
-                "title":             p.title,
-                "short_description": p.short_description,
-                "price":             p.price,
-                "compare_price":     p.compare_price,
-                "brand":             p.brand,
-                "store":             p.store,
-                "store_id":          str(p.store_id) if p.store_id else None,
-                "rating":            p.rating,
-                "rating_number":     p.rating_number,
-                "sales":             p.sales,
-                "category":          p.category,
-                "main_category":     p.main_category,
-                "stock":             p.stock,
-                "in_stock":          p.stock > 0,
-                "main_image":        next((img.image_url for img in p.images if img.is_primary), None) or (p.images[0].image_url if p.images else None),
-                "images":            [img.image_url for img in p.images],
-                "created_at":        p.created_at,
-            }
-            for p in products
-        ],
+         "results": [
+             {
+                 "id":            str(p.id),
+                 "title":         p.title,
+                 "price":         p.price,
+                 "compare_price": p.compare_price,
+                 "discount_pct":  round(((p.compare_price - p.price) / p.compare_price) * 100) if p.compare_price and p.compare_price > p.price > 0 else None,
+                 "brand":         p.brand,
+                 "rating":        p.rating,
+                 "rating_number": p.rating_number,
+                 "category":      p.category,
+                 "stock":         p.stock,
+                 "in_stock":      p.stock > 0,
+                 "main_image":    next((img.image_url for img in p.images if img.is_primary), None) or (p.images[0].image_url if p.images else None),
+             }
+             for p in products
+         ],
+     }
     }
 
 
@@ -205,7 +200,7 @@ def admin_list_products(
     page:            int = Query(1, ge=1),
     per_page:        int = Query(50, ge=1, le=200),
 ):
-    query = db.query(Product).options(selectinload(Product.images))
+    query = db.query(Product)
     if not include_deleted:
         query = query.filter(Product.is_deleted == False)
     if search:
@@ -924,7 +919,7 @@ def export_products(
     category: Optional[str] = None,
     include_deleted: bool = False,
 ):
-    query = db.query(Product).options(selectinload(Product.images))
+    query = db.query(Product)
     if not include_deleted:
         query = query.filter(Product.is_deleted == False)
     if status:
@@ -1104,7 +1099,7 @@ def delete_image(image_id: str, db: Session = Depends(get_db)):
 
 @router.get("/{product_id}")
 def get_product(product_id: str, db: Session = Depends(get_db)):
-    product = db.query(Product).options(selectinload(Product.images)).filter(
+    product = db.query(Product).filter(
         Product.id == product_id,
         Product.status == "active",
         Product.is_deleted == False,
