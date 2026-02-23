@@ -338,7 +338,7 @@ def homepage_sections(db: Session = Depends(get_db)):
             "subtitle": f"Shop all {cat.lower()}",
             "badge": None,
             "theme": themes[i % len(themes)],
-            "view_all": f"/store?q={cat.split()[0]}",
+            "view_all": f"/store?category={cat}",
             "products": prods,
         })
 
