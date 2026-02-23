@@ -22,14 +22,19 @@ def get_categories(db: Session = Depends(get_db)):
         .all()
     )
 
-    # Build a product count per matched_category slug in one query
+    # ✅ BUG FIX: `matched_category` is NOT a real database column — it is
+    # only a CSV import header that maps onto the `category` column during
+    # bulk upload.  Querying it caused a PostgreSQL "column does not exist"
+    # error on every /api/categories request, which silently returned empty
+    # counts and broke the store sidebar.  Use `category` instead.
     rows = db.execute(text("""
-        SELECT matched_category, COUNT(*) as cnt
+        SELECT category, COUNT(*) as cnt
         FROM products
         WHERE status = 'active'
           AND is_deleted = FALSE
-          AND matched_category IS NOT NULL
-        GROUP BY matched_category
+          AND category IS NOT NULL
+          AND category != ''
+        GROUP BY category
     """)).fetchall()
     counts: dict[str, int] = {r[0]: r[1] for r in rows}
 
@@ -42,13 +47,15 @@ def get_categories(db: Session = Depends(get_db)):
             "slug":          slug,
             "image_url":     c.image_url,
             "parent_id":     str(c.parent_id) if c.parent_id else None,
-            # product_count matches on slug so the sidebar filter shows real numbers
+            # ✅ FIX: product_count now looks up by `category` slug so counts
+            # correctly match what the store filter actually returns.
             "product_count": counts.get(slug, 0),
         })
 
-    # Also inject any matched_category values that exist in products but
-    # have no corresponding Category row — so the sidebar never silently
-    # hides filterable categories that were imported via CSV bulk-upload.
+    # Also inject any `category` slugs that exist in products but have no
+    # corresponding Category row — so the sidebar never silently hides
+    # filterable categories that were imported via CSV bulk-upload.
+    # ✅ BUG FIX: was using `matched_category` (not a DB column); fixed to `category`.
     known_slugs = {c["slug"] for c in result}
     for slug, count in counts.items():
         if slug and slug not in known_slugs:

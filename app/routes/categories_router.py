@@ -174,6 +174,9 @@ def products_by_department(
     per_page: int = 40,
     sort_by: str = "rating",
     sort_order: str = "desc",
+    # ✅ FIX Bug 3: StoreClient sends a single combined `sort` param
+    # (e.g. "newest", "price_asc", "rating") — accept it so sorting works.
+    sort: str = "",
 ) -> JSONResponse:
     """
     GET /api/products/by-department/beauty?page=1&per_page=40
@@ -194,10 +197,28 @@ def products_by_department(
         placeholders = ", ".join(f":slug_{i}" for i in range(len(slugs)))
         bind = {f"slug_{i}": s for i, s in enumerate(slugs)}
 
-        # Allowed sort columns whitelist to prevent injection
-        allowed_sort = {"rating", "price", "sales", "created_at"}
-        col = sort_by if sort_by in allowed_sort else "rating"
-        direction = "DESC" if sort_order.lower() == "desc" else "ASC"
+        # ── Sort resolution ────────────────────────────────────────────────
+        # The frontend sends a single combined `sort` value (e.g. "newest",
+        # "price_asc", "rating") via the `sort` query param. The endpoint
+        # also accepts the older `sort_by` + `sort_order` pair for backwards
+        # compatibility. Resolve whichever is present.
+        _SORT_MAP = {
+            "newest":     ("created_at", "DESC"),
+            "price_asc":  ("price",      "ASC"),
+            "price_desc": ("price",      "DESC"),
+            "rating":     ("rating",     "DESC"),
+            "sales":      ("sales",      "DESC"),
+            "popular":    ("sales",      "DESC"),
+            "discount":   ("compare_price", "DESC"),  # proxy; real discount computed in Python
+        }
+        allowed_sort = {"rating", "price", "sales", "created_at", "compare_price"}
+
+        if sort in _SORT_MAP:
+            col, direction = _SORT_MAP[sort]
+        else:
+            # Fall back to explicit sort_by / sort_order params
+            col       = sort_by if sort_by in allowed_sort else "rating"
+            direction = "DESC" if sort_order.lower() == "desc" else "ASC"
 
         count_row = db.execute(text(f"""
             SELECT COUNT(*) FROM products
@@ -208,9 +229,13 @@ def products_by_department(
         total = count_row[0] if count_row else 0
 
         offset = (page - 1) * per_page
+        # ✅ BUG FIX: removed `discount_pct` from SELECT — it is NOT a real
+        # database column (it is always computed in Python from price/compare_price).
+        # Selecting it was causing a PostgreSQL "column does not exist" error
+        # which silently returned 0 results on the department pages.
         rows = db.execute(text(f"""
-            SELECT id, title, price, compare_price, discount_pct, brand,
-                   category as category,
+            SELECT id, title, price, compare_price, brand,
+                   category,
                    COALESCE(main_image, image_url) as main_image,
                    rating, rating_number, in_stock, sales
             FROM products
@@ -221,24 +246,31 @@ def products_by_department(
             LIMIT :limit OFFSET :offset
         """), {**bind, "limit": per_page, "offset": offset}).fetchall()
 
-        results = [
-            {
+        results = []
+        for r in rows:
+            price         = r[2]
+            compare_price = r[3]
+            # Compute discount_pct in Python — consistent with the main products endpoint
+            discount_pct = (
+                round(((compare_price - price) / compare_price) * 100)
+                if compare_price and compare_price > price > 0
+                else None
+            )
+            results.append({
                 "id":            str(r[0]),
                 "title":         r[1],
-                "price":         r[2],
-                "compare_price": r[3],
-                "discount_pct":  r[4],
-                "brand":         r[5],
-                "category":      r[6],
-                "main_image":    r[7],
-                "image_url":     r[7],
-                "rating":        r[8],
-                "rating_number": r[9],
-                "in_stock":      r[10],
-                "sales":         r[11],
-            }
-            for r in rows
-        ]
+                "price":         price,
+                "compare_price": compare_price,
+                "discount_pct":  discount_pct,   # ✅ computed, not from DB column
+                "brand":         r[4],
+                "category":      r[5],
+                "main_image":    r[6],
+                "image_url":     r[6],
+                "rating":        r[7],
+                "rating_number": r[8],
+                "in_stock":      r[9],
+                "sales":         r[10],
+            })
 
         return JSONResponse(content={"results": results, "total": total, "page": page, "per_page": per_page})
 
