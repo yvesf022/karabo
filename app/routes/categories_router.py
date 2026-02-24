@@ -15,7 +15,7 @@ Response:
       {
         "key": "beauty",
         "title": "Beauty & Personal Care",
-        "href": "/store?main_category=Beauty+%26+Personal+Care",
+        "href": "/store?main_cat=beauty",
         "image": "https://...",          # from a real product
         "subcategories": [
           {"key": "sunscreen", "label": "Sunscreen", "href": "...", "image": "..."},
@@ -115,7 +115,7 @@ def get_categories() -> JSONResponse:
         result.append({
             "key":           "beauty",
             "title":         "Beauty & Personal Care",
-            "href":          _make_href("main_category", "Beauty & Personal Care"),
+            "href":          "/store?main_cat=beauty",
             "image":         beauty_img,
             "subcategories": beauty_subs,
         })
@@ -147,7 +147,7 @@ def get_categories() -> JSONResponse:
         result.append({
             "key":           "phones",
             "title":         "Cell Phones & Accessories",
-            "href":          _make_href("main_category", "Cell Phones & Accessories"),
+            "href":          "/store?main_cat=phones",
             "image":         phones_img,
             "subcategories": phone_subs,
         })

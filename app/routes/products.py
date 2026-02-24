@@ -94,6 +94,7 @@ def _serialize_product(p: Product, admin: bool = False) -> dict:
 def list_products(
     db: Session = Depends(get_db),
     search:        Optional[str]   = None,
+    q:             Optional[str]   = None,   # ✅ FIX: alias for search= (used by store.ts and products.ts)
     category:      Optional[str]   = None,
     main_category: Optional[str]   = None,
     brand:         Optional[str]   = None,
@@ -111,9 +112,10 @@ def list_products(
         Product.status == "active",
         Product.is_deleted == False,
     )
+    search = search or q  # ✅ FIX: accept both ?search= and ?q= (frontend sends q=)
     if search:
-        q = f"%{search}%"
-        query = query.filter(or_(Product.title.ilike(q), Product.short_description.ilike(q), Product.brand.ilike(q)))
+        _like = f"%{search}%"
+        query = query.filter(or_(Product.title.ilike(_like), Product.short_description.ilike(_like), Product.brand.ilike(_like)))
     if category:
         query = query.filter(Product.category == category)
     if main_category:
@@ -969,6 +971,19 @@ async def bulk_upload_products(
                 product = existing
                 # Replace images if new ones provided
                 image_urls = [u.strip() for u in (row.get("image_urls") or "").split(",") if u.strip()]
+                if not image_urls:
+                    # ✅ FIX: extract hi_res URLs from raw_json when image_urls column is empty
+                    try:
+                        import json as _json
+                        raw = row.get("raw_json") or ""
+                        if raw:
+                            parsed = _json.loads(raw) if isinstance(raw, str) else raw
+                            image_urls = [
+                                img["hi_res"] for img in (parsed.get("images") or [])
+                                if img.get("hi_res")
+                            ]
+                    except Exception:
+                        pass
                 if image_urls:
                     for img in list(product.images):
                         db.delete(img)
@@ -1006,8 +1021,21 @@ async def bulk_upload_products(
                 )
                 db.add(product)
                 db.flush()
-                # Add images
+                # Add images — prefer image_urls column, fall back to raw_json.images[].hi_res
                 image_urls = [u.strip() for u in (row.get("image_urls") or "").split(",") if u.strip()]
+                if not image_urls:
+                    # ✅ FIX: extract hi_res URLs from raw_json when image_urls column is empty
+                    try:
+                        import json as _json
+                        raw = row.get("raw_json") or ""
+                        if raw:
+                            parsed = _json.loads(raw) if isinstance(raw, str) else raw
+                            image_urls = [
+                                img["hi_res"] for img in (parsed.get("images") or [])
+                                if img.get("hi_res")
+                            ]
+                    except Exception:
+                        pass
                 for pos, url in enumerate(image_urls[:10]):
                     db.add(ProductImage(product_id=product.id, image_url=url, position=pos, is_primary=(pos == 0)))
                 # ✅ BUG FIX: main_image column was never set on new products either

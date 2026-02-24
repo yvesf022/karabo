@@ -21,6 +21,7 @@ from sqlalchemy import desc, func
 from typing import Optional
 import re
 import time  # ✅ required for cache
+import urllib.parse
 
 from app.database import get_db
 from app.models import Product
@@ -412,7 +413,7 @@ def homepage_sections(db: Session = Depends(get_db)):
             "subtitle": f"Shop all {cat.lower()}",
             "badge":    None,
             "theme":    themes[i % len(themes)],
-            "view_all": f"/store?q={cat}",
+            "view_all": f"/store?q={urllib.parse.quote(cat.strip())}",
             "products": prods,
         })
 
