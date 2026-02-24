@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from app.database import get_db
 from app.dependencies import get_current_user, require_admin
 from app.models import (
-    Order, OrderStatus, OrderItem, OrderTracking,
+    Order, OrderStatus, OrderItem, OrderTracking, OrderReturn, OrderNote,
     ShippingStatus, Payment, PaymentStatus,
     Product, ProductVariant, ProductImage,
     User, Cart, CartItem,
@@ -92,6 +92,39 @@ def _serialize_order_summary(o: Order) -> dict:
 
 
 def _serialize_order_detail(o: Order, include_admin_fields: bool = False) -> dict:
+    # Derive return info from the most recent OrderReturn record
+    latest_return = None
+    if hasattr(o, "returns") and o.returns:
+        latest_return = sorted(o.returns, key=lambda r: r.created_at, reverse=True)[0]
+
+    # Derive refund info from OrderReturn (refund_amount lives there)
+    refund_status  = None
+    refund_amount  = None
+    refund_reason  = None
+    return_status  = None
+    return_reason  = None
+    if latest_return:
+        return_status = latest_return.status          # pending/approved/rejected/completed
+        return_reason = latest_return.reason
+        # If a refund_amount was set on the return, surface it as refund info
+        if latest_return.refund_amount is not None:
+            refund_amount = latest_return.refund_amount
+            refund_status = "completed" if latest_return.status == "completed" else "processing"
+            refund_reason = latest_return.reason
+
+    # Derive admin-visible notes (OrderNote rows)
+    order_notes = []
+    if hasattr(o, "admin_notes") and o.admin_notes:
+        order_notes = [
+            {
+                "id":          str(n.id),
+                "content":     n.note,
+                "is_internal": n.is_internal,
+                "created_at":  n.created_at,
+            }
+            for n in sorted(o.admin_notes, key=lambda n: n.created_at)
+        ]
+
     data = {
         "id":               str(o.id),
         "user_id":          str(o.user_id),
@@ -102,6 +135,26 @@ def _serialize_order_detail(o: Order, include_admin_fields: bool = False) -> dic
         "notes":            o.notes,
         "created_at":       o.created_at,
         "updated_at":       o.updated_at,
+        # Timestamps derived from status transitions (not stored separately on Order model —
+        # we surface them as None when not available so frontend always gets the key)
+        "cancelled_at":     getattr(o, "cancelled_at", None),
+        "shipped_at":       getattr(o, "shipped_at", None),
+        "delivered_at":     getattr(o, "delivered_at", None),
+        # Return / refund state derived from OrderReturn relationship
+        "return_status":    return_status,
+        "return_reason":    return_reason,
+        "refund_status":    refund_status,
+        "refund_amount":    refund_amount,
+        "refund_reason":    refund_reason,
+        # Notes (customer-visible and internal)
+        "order_notes":      order_notes,
+        # User snapshot for admin view
+        "user": {
+            "id":        str(o.user.id),
+            "email":     o.user.email,
+            "full_name": o.user.full_name,
+            "phone":     getattr(o.user, "phone", None),
+        } if include_admin_fields and hasattr(o, "user") and o.user else None,
         "items": [
             {
                 "id":            str(i.id),
@@ -439,8 +492,10 @@ def update_shipping(
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "Order not found")
-    if order.status != OrderStatus.paid:
-        raise HTTPException(400, "Cannot update shipping before payment is approved")
+    # Allow shipping updates on any non-cancelled order — admin can update
+    # shipped → delivered, or correct a status at any point
+    if order.status == OrderStatus.cancelled:
+        raise HTTPException(400, "Cannot update shipping on a cancelled order")
     try:
         order.shipping_status = ShippingStatus(payload.get("status"))
     except Exception:
@@ -472,6 +527,9 @@ def admin_get_order_detail(
             joinedload(Order.items).joinedload(OrderItem.variant),
             joinedload(Order.payments).joinedload(Payment.proof),
             joinedload(Order.tracking),
+            joinedload(Order.returns),
+            joinedload(Order.admin_notes),
+            joinedload(Order.user),
         )
         .filter(Order.id == order_id)
         .first()
@@ -479,6 +537,181 @@ def admin_get_order_detail(
     if not order:
         raise HTTPException(404, "Order not found")
     return _serialize_order_detail(order, include_admin_fields=True)
+
+
+# =====================================================
+# ADMIN: SAVE / UPDATE TRACKING INFO
+# POST /orders/admin/{order_id}/tracking
+# Creates the OrderTracking row if it doesn't exist, otherwise updates it.
+# =====================================================
+
+class TrackingPayload(BaseModel):
+    tracking_number: str
+    carrier: Optional[str] = None
+    tracking_url: Optional[str] = None
+    estimated_delivery: Optional[str] = None   # ISO-8601 string or null
+
+
+@router.post("/admin/{order_id}/tracking")
+def save_tracking(
+    order_id: str,
+    payload: TrackingPayload,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    tracking = db.query(OrderTracking).filter(OrderTracking.order_id == order_id).first()
+    estimated = None
+    if payload.estimated_delivery:
+        try:
+            estimated = datetime.fromisoformat(payload.estimated_delivery.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(400, "estimated_delivery must be a valid ISO-8601 date string")
+
+    if tracking:
+        tracking.carrier           = payload.carrier
+        tracking.tracking_number   = payload.tracking_number
+        tracking.tracking_url      = payload.tracking_url
+        tracking.estimated_delivery = estimated
+        tracking.updated_at        = datetime.now(timezone.utc)
+    else:
+        tracking = OrderTracking(
+            order_id          = order_id,
+            carrier           = payload.carrier,
+            tracking_number   = payload.tracking_number,
+            tracking_url      = payload.tracking_url,
+            estimated_delivery = estimated,
+        )
+        db.add(tracking)
+
+    order.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {
+        "message":         "Tracking saved",
+        "order_id":        str(order.id),
+        "tracking_number": tracking.tracking_number,
+        "carrier":         tracking.carrier,
+    }
+
+
+# =====================================================
+# ADMIN: MANAGE RETURN REQUEST
+# POST /orders/admin/{order_id}/return-action
+# Approve / reject / complete a customer return request.
+# =====================================================
+
+class ReturnActionPayload(BaseModel):
+    action: str   # approve | reject | complete
+    note: Optional[str] = None
+
+
+@router.post("/admin/{order_id}/return-action")
+def manage_return(
+    order_id: str,
+    payload: ReturnActionPayload,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    valid_actions = {"approve", "reject", "complete"}
+    if payload.action not in valid_actions:
+        raise HTTPException(400, f"Invalid action. Must be one of: {valid_actions}")
+
+    # Find the most recent pending/approved return for this order
+    order_return = (
+        db.query(OrderReturn)
+        .filter(OrderReturn.order_id == order_id)
+        .order_by(OrderReturn.created_at.desc())
+        .first()
+    )
+    if not order_return:
+        raise HTTPException(404, "No return request found for this order")
+
+    status_map = {"approve": "approved", "reject": "rejected", "complete": "completed"}
+    order_return.status     = status_map[payload.action]
+    order_return.admin_notes = payload.note
+    order_return.updated_at  = datetime.now(timezone.utc)
+
+    # If completing the return, update the order status to reflect it
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if order and payload.action == "complete":
+        order.shipping_status = ShippingStatus.returned
+        order.updated_at      = datetime.now(timezone.utc)
+
+    db.commit()
+    return {
+        "message":       f"Return {status_map[payload.action]}",
+        "order_id":      order_id,
+        "return_status": order_return.status,
+    }
+
+
+# =====================================================
+# ADMIN: UPDATE REFUND STATUS
+# PATCH /orders/admin/{order_id}/refund-status
+# Update the refund status on the latest return record independently.
+# =====================================================
+
+class RefundStatusPayload(BaseModel):
+    status: str  # none | requested | processing | completed | rejected
+
+
+@router.patch("/admin/{order_id}/refund-status")
+def update_refund_status(
+    order_id: str,
+    payload: RefundStatusPayload,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    valid_statuses = {"none", "requested", "processing", "completed", "rejected"}
+    if payload.status not in valid_statuses:
+        raise HTTPException(400, f"Invalid refund status. Must be one of: {valid_statuses}")
+
+    # The refund_amount field on OrderReturn signals refund existence.
+    # We store the refund status in admin_notes as a JSON tag since the
+    # Order model has no separate refund_status column — or we can upsert
+    # a return record to track it. Here we find the latest return and
+    # update it; if there's none, we create a placeholder.
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    order_return = (
+        db.query(OrderReturn)
+        .filter(OrderReturn.order_id == order_id)
+        .order_by(OrderReturn.created_at.desc())
+        .first()
+    )
+
+    if not order_return:
+        # No return record — create one so we can track refund status
+        order_return = OrderReturn(
+            order_id = order_id,
+            user_id  = order.user_id,
+            reason   = "Admin-initiated refund",
+            status   = "approved",
+        )
+        db.add(order_return)
+
+    # Map refund status → return status for UI coherence
+    refund_to_return = {
+        "processing": "approved",
+        "completed":  "completed",
+        "rejected":   "rejected",
+    }
+    if payload.status in refund_to_return:
+        order_return.status = refund_to_return[payload.status]
+    order_return.admin_notes = f"refund_status:{payload.status}"
+    order_return.updated_at  = datetime.now(timezone.utc)
+    order.updated_at         = datetime.now(timezone.utc)
+    db.commit()
+    return {
+        "message":       "Refund status updated",
+        "order_id":      order_id,
+        "refund_status": payload.status,
+    }
 
 
 # =====================================================
