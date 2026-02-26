@@ -57,6 +57,16 @@ app.include_router(admin_auth_router)
 
 # ── Core API ───────────────────────────────────────────────────────
 app.include_router(users.router,           prefix="/api")
+
+# ══ STATIC-PATH ROUTERS FIRST — must register before any router with /{id} ══
+# random_products has /products/random — must come before products.router (/{product_id})
+app.include_router(random_products.router,      prefix="/api")
+# categories_router has /categories/departments — must come before categories_brands (/{category_id})
+app.include_router(categories_router.router,    prefix="/api")
+# homepage_sections has /homepage/sections — no conflict but register early for safety
+app.include_router(homepage_sections.router,    prefix="/api")
+
+# ── Core routers with dynamic /{id} routes ────────────────────────────────────
 app.include_router(products.router,        prefix="/api")
 app.include_router(orders.router,          prefix="/api")
 app.include_router(payments.router,        prefix="/api")
@@ -64,7 +74,7 @@ app.include_router(admin.router,           prefix="/api")
 app.include_router(admin_users.router,     prefix="/api")
 app.include_router(password_reset.router,  prefix="/api")
 
-# ── Enterprise — User ──────────────────────────────────────────────
+# ── Enterprise — User ──────────────────────────────────────────────────────────
 app.include_router(addresses.router,            prefix="/api")
 app.include_router(cart.router,                 prefix="/api")
 app.include_router(wishlist.router,             prefix="/api")
@@ -79,21 +89,11 @@ app.include_router(order_enhancements.router,   prefix="/api")
 app.include_router(payment_enhancements.router, prefix="/api")
 app.include_router(wallet.router,               prefix="/api")
 
-# ── Enterprise — Admin ─────────────────────────────────────────────
+# ── Enterprise — Admin ─────────────────────────────────────────────────────────
 app.include_router(admin_orders_advanced.router,   prefix="/api")
 app.include_router(admin_payments_advanced.router,  prefix="/api")
 app.include_router(admin_users_advanced.router,     prefix="/api")
 
-# ── Homepage Sections (smart product categoriser) ──────────────────
-app.include_router(homepage_sections.router, prefix="/api")
-# Endpoint: GET /api/homepage/sections
-
-# ── Random Products (hero grid, discovery carousels) ───────────────
-app.include_router(random_products.router, prefix="/api")
-
-# ── Dynamic Category Images (beauty subcats + phone brands) ────────
-app.include_router(categories_router.router, prefix="/api")
-# Endpoint: GET /api/categories/departments
 # Endpoints:
 #   GET /api/products/random?count=20&with_images=true&seed=<int>&exclude=id1,id2
 #   GET /api/products/random/categories?per_category=6&max_cats=12
