@@ -33,7 +33,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.admin_auth import get_current_admin
+from app.dependencies import require_admin as get_current_admin
 from app.models import Product
 
 # ── Anthropic ─────────────────────────────────────────────────────────────────

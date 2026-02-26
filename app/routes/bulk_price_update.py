@@ -8,15 +8,23 @@ USAGE:
        from app.routes import bulk_price_update
        app.include_router(bulk_price_update.router, prefix="/api")
   3. Deploy to Render
-  4. Hit: POST /api/admin/bulk-price-update  (requires admin token)
+  4. Hit: POST /api/admin/bulk-price-update
+     Header: x-bulk-secret: karabo-bulk-2026
   5. Once done, remove the router from main.py and delete this file
 """
 
-from fastapi import APIRouter, Depends
+import os
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.database import get_db
-from app.admin_auth import get_current_admin
+
+router = APIRouter(tags=["Admin -- Bulk Price Update"])
+
+def verify_secret(x_bulk_secret: str = Header(...)):
+    secret = os.getenv("BULK_PRICE_SECRET", "karabo-bulk-2026")
+    if x_bulk_secret != secret:
+        raise HTTPException(status_code=403, detail="Invalid secret")
 
 router = APIRouter(tags=["Admin -- Bulk Price Update"])
 
@@ -635,7 +643,7 @@ PRICE_UPDATES = [
 @router.post("/admin/bulk-price-update")
 def run_bulk_price_update(
     db: Session = Depends(get_db),
-    admin=Depends(get_current_admin),
+    secret=Depends(verify_secret),
 ):
     """
     Runs all 608 price UPDATE statements in a single transaction.
