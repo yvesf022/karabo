@@ -41,6 +41,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://kkkkkk-kappa.vercel.app",
+        "https://karabostore.com",
+        "https://www.karabostore.com",
         "http://localhost:3000",
     ],
     allow_credentials=True,
