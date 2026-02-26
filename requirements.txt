@@ -21,6 +21,8 @@ email-validator==2.1.0.post1
 # Environment & HTTP
 python-dotenv==1.0.1
 requests==2.31.0
+httpx==0.27.0
+anthropic==0.25.0
 
 # Cloud storage
 cloudinary==1.39.0
