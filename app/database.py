@@ -10,9 +10,24 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL environment variable is not set")
 
+# ── Neon / any external Postgres over SSL ──────────────────────────
+# Neon requires SSL and uses port 5432 over TLS (port 443 proxy also
+# available via the "pooled" connection string).
+# We normalise the URL scheme so SQLAlchemy uses psycopg2 correctly.
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
 engine = create_engine(
     DATABASE_URL,
-    pool_pre_ping=True,
+    pool_pre_ping=True,       # drops stale connections (vital for Neon cold-starts)
+    pool_size=5,              # Neon free tier: max 10 connections, keep headroom
+    max_overflow=2,
+    pool_timeout=30,
+    pool_recycle=300,         # recycle connections every 5 min (avoids idle timeouts)
+    connect_args={
+        "sslmode": "require", # Neon mandates SSL; harmless on other Postgres hosts
+        "connect_timeout": 10,
+    },
 )
 
 SessionLocal = sessionmaker(
@@ -49,7 +64,7 @@ def init_database():
     - Stores table exists (needed before Product FK)
     - Missing columns are auto-added to all tables
     - All tables created via ORM
-    - Safe for Render (no shell required)
+    - Safe for Render free tier via Neon (port 443 / SSL)
     """
 
     # ==================================================
@@ -60,7 +75,6 @@ def init_database():
     # ==================================================
 
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-        # Ensure product_status enum exists first
         conn.execute(text("""
             DO $$ BEGIN
                 CREATE TYPE product_status AS ENUM
@@ -68,7 +82,6 @@ def init_database():
             EXCEPTION WHEN duplicate_object THEN null;
             END $$;
         """))
-        # Then patch any missing values (safe on existing enum too)
         for value in ("active", "inactive", "discontinued", "archived", "draft"):
             conn.execute(text(f"""
                 ALTER TYPE product_status ADD VALUE IF NOT EXISTS '{value}';
@@ -164,18 +177,15 @@ def init_database():
         # 🔥 AUTO-SYNC PRODUCTS TABLE
         # ==================================================
 
-        # Original columns
-        add_column_if_missing("products", "parent_asin",    "VARCHAR")
-        add_column_if_missing("products", "rating_number",  "INTEGER DEFAULT 0")
-        add_column_if_missing("products", "main_category",  "VARCHAR")
-        add_column_if_missing("products", "categories",     "JSON")
-        add_column_if_missing("products", "details",        "JSON")
-        add_column_if_missing("products", "features",       "JSON")
-        add_column_if_missing("products", "store",          "VARCHAR")
-        add_column_if_missing("products", "main_image",      "VARCHAR")
-        add_column_if_missing("products", "image_url",       "VARCHAR")
-
-        # New columns
+        add_column_if_missing("products", "parent_asin",         "VARCHAR")
+        add_column_if_missing("products", "rating_number",       "INTEGER DEFAULT 0")
+        add_column_if_missing("products", "main_category",       "VARCHAR")
+        add_column_if_missing("products", "categories",          "JSON")
+        add_column_if_missing("products", "details",             "JSON")
+        add_column_if_missing("products", "features",            "JSON")
+        add_column_if_missing("products", "store",               "VARCHAR")
+        add_column_if_missing("products", "main_image",          "VARCHAR")
+        add_column_if_missing("products", "image_url",           "VARCHAR")
         add_column_if_missing("products", "low_stock_threshold", "INTEGER DEFAULT 10")
         add_column_if_missing("products", "is_deleted",          "BOOLEAN NOT NULL DEFAULT FALSE")
         add_column_if_missing("products", "deleted_at",          "TIMESTAMPTZ")
@@ -216,33 +226,30 @@ def init_database():
         # ==================================================
 
         indexes = [
-            # Existing indexes
-            ("idx_products_is_deleted",  "products",              "is_deleted"),
-            ("idx_products_store_id",    "products",              "store_id"),
-            ("idx_stores_slug",          "stores",                "slug"),
-            ("idx_stores_active",        "stores",                "is_active"),
-            
-            # Enterprise feature indexes (created only if tables exist)
-            ("idx_addresses_user_id",           "addresses",            "user_id"),
-            ("idx_addresses_is_default",        "addresses",            "is_default"),
-            ("idx_carts_user_id",               "carts",                "user_id"),
-            ("idx_cart_items_cart_id",          "cart_items",           "cart_id"),
-            ("idx_cart_items_product_id",       "cart_items",           "product_id"),
-            ("idx_wishlists_user_id",           "wishlists",            "user_id"),
-            ("idx_reviews_product_id",          "reviews",              "product_id"),
-            ("idx_reviews_user_id",             "reviews",              "user_id"),
-            ("idx_reviews_rating",              "reviews",              "rating"),
-            ("idx_categories_slug",             "categories",           "slug"),
-            ("idx_brands_slug",                 "brands",               "slug"),
-            ("idx_notifications_user_id",       "notifications",        "user_id"),
-            ("idx_notifications_is_read",       "notifications",        "is_read"),
-            ("idx_coupons_code",                "coupons",              "code"),
-            ("idx_wallets_user_id",             "wallets",              "user_id"),
-            ("idx_order_items_order_id",        "order_items",          "order_id"),
-            ("idx_order_returns_order_id",      "order_returns",        "order_id"),
-            ("idx_order_notes_order_id",        "order_notes",          "order_id"),
-            ("idx_payment_history_payment_id",  "payment_status_history", "payment_id"),
-            ("idx_payments_reference_number",     "payments",               "reference_number"),
+            ("idx_products_is_deleted",          "products",               "is_deleted"),
+            ("idx_products_store_id",            "products",               "store_id"),
+            ("idx_stores_slug",                  "stores",                 "slug"),
+            ("idx_stores_active",                "stores",                 "is_active"),
+            ("idx_addresses_user_id",            "addresses",              "user_id"),
+            ("idx_addresses_is_default",         "addresses",              "is_default"),
+            ("idx_carts_user_id",                "carts",                  "user_id"),
+            ("idx_cart_items_cart_id",           "cart_items",             "cart_id"),
+            ("idx_cart_items_product_id",        "cart_items",             "product_id"),
+            ("idx_wishlists_user_id",            "wishlists",              "user_id"),
+            ("idx_reviews_product_id",           "reviews",                "product_id"),
+            ("idx_reviews_user_id",              "reviews",                "user_id"),
+            ("idx_reviews_rating",               "reviews",                "rating"),
+            ("idx_categories_slug",              "categories",             "slug"),
+            ("idx_brands_slug",                  "brands",                 "slug"),
+            ("idx_notifications_user_id",        "notifications",          "user_id"),
+            ("idx_notifications_is_read",        "notifications",          "is_read"),
+            ("idx_coupons_code",                 "coupons",                "code"),
+            ("idx_wallets_user_id",              "wallets",                "user_id"),
+            ("idx_order_items_order_id",         "order_items",            "order_id"),
+            ("idx_order_returns_order_id",       "order_returns",          "order_id"),
+            ("idx_order_notes_order_id",         "order_notes",            "order_id"),
+            ("idx_payment_history_payment_id",   "payment_status_history", "payment_id"),
+            ("idx_payments_reference_number",    "payments",               "reference_number"),
         ]
 
         for idx_name, table, column in indexes:
@@ -253,9 +260,8 @@ def init_database():
                     SELECT 1 FROM pg_indexes
                     WHERE indexname = '{idx_name}'
                 ) THEN
-                    -- Only create index if table and column exist
                     IF EXISTS (
-                        SELECT 1 FROM information_schema.tables 
+                        SELECT 1 FROM information_schema.tables
                         WHERE table_name = '{table}'
                     ) AND EXISTS (
                         SELECT 1 FROM information_schema.columns
