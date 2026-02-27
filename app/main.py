@@ -167,6 +167,23 @@ def startup():
               )
         """))
 
+        # ✅ Add pricing workflow columns if missing
+        db.execute(text(
+            "ALTER TABLE products ADD COLUMN IF NOT EXISTS pricing_status "
+            "VARCHAR NOT NULL DEFAULT 'unpriced'"
+        ))
+        db.execute(text(
+            "ALTER TABLE products ADD COLUMN IF NOT EXISTS priced_by "
+            "UUID REFERENCES users(id) ON DELETE SET NULL"
+        ))
+        # ✅ Backfill pricing_status for products already marked as priced
+        db.execute(text("""
+            UPDATE products
+            SET pricing_status = 'admin_approved'
+            WHERE is_priced = TRUE
+              AND (pricing_status IS NULL OR pricing_status = 'unpriced')
+        """))
+
         db.commit()
         print("✅ Database schema verified")
         print("🚀 Enterprise features initialized")

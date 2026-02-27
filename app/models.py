@@ -143,8 +143,10 @@ class Product(Base):
     status = Column(String, default="active", nullable=False)
     is_deleted = Column(Boolean, default=False, nullable=False)   # soft-delete
     deleted_at = Column(DateTime(timezone=True), nullable=True)   # soft-delete
-    is_priced  = Column(Boolean, default=False, nullable=False)   # pricing tool: has been priced/marked by admin
-    priced_at  = Column(DateTime(timezone=True), nullable=True)   # pricing tool: when it was last priced
+    is_priced      = Column(Boolean, default=False, nullable=False)   # pricing tool: has been priced/marked by admin
+    priced_at      = Column(DateTime(timezone=True), nullable=True)   # pricing tool: when it was last priced
+    pricing_status = Column(String, default="unpriced", nullable=False)  # unpriced | ai_suggested | admin_approved | admin_rejected
+    priced_by      = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)  # admin who approved price
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     images = relationship("ProductImage", back_populates="product", cascade="all, delete-orphan", order_by="ProductImage.position")
@@ -721,3 +723,57 @@ Index("idx_user_sessions_expires_at", UserSession.expires_at)
 # Add these to your existing Product model:
 # reviews = relationship("Review", back_populates="product", cascade="all, delete-orphan")
 # questions = relationship("ProductQuestion", back_populates="product", cascade="all, delete-orphan")
+
+# =========================
+# PRICE PROPOSALS (AI Pricing Audit Trail)
+# =========================
+
+class PriceProposal(Base):
+    """
+    Audit trail for every AI-generated and manually-entered price proposal.
+
+    Lifecycle:
+      pending  → admin approves → approved   (product.is_priced flips here)
+      pending  → admin rejects  → rejected
+      pending  → new proposal   → superseded (auto-expired on new search)
+    """
+    __tablename__ = "price_proposals"
+
+    id                = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id        = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
+    proposed_by       = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # Price data locked at proposal time
+    inr_price         = Column(Float, nullable=False, default=0)
+    source            = Column(String, nullable=False, default="unknown")   # e.g. "amazon.in", "manual"
+    confidence        = Column(String, nullable=False, default="low")       # "high" | "medium" | "low"
+    exchange_rate     = Column(Float, nullable=False, default=0.21)
+    rate_source       = Column(String, nullable=False, default="fallback")  # "live" | "fallback" | "manual"
+
+    # Computed prices (locked at proposal time so history stays accurate)
+    final_price_lsl   = Column(Float, nullable=False)
+    compare_price_lsl = Column(Float, nullable=False)
+    discount_pct      = Column(Integer, nullable=False, default=0)
+    margin_pct        = Column(Float, nullable=False, default=0)
+
+    # Workflow state: pending | approved | rejected | superseded
+    status            = Column(String, nullable=False, default="pending")
+
+    # Approval / rejection
+    approved_by       = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at       = Column(DateTime(timezone=True), nullable=True)
+    reject_reason     = Column(Text, nullable=True)
+
+    # Timestamps
+    created_at        = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at        = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    product  = relationship("Product", foreign_keys=[product_id])
+    proposer = relationship("User",    foreign_keys=[proposed_by])
+    approver = relationship("User",    foreign_keys=[approved_by])
+
+Index("idx_price_proposals_product_id",  PriceProposal.product_id)
+Index("idx_price_proposals_status",      PriceProposal.status)
+Index("idx_price_proposals_proposed_by", PriceProposal.proposed_by)
+Index("idx_price_proposals_created_at",  PriceProposal.created_at)

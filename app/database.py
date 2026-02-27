@@ -191,6 +191,8 @@ def init_database():
         add_column_if_missing("products", "deleted_at",          "TIMESTAMPTZ")
         add_column_if_missing("products", "is_priced",           "BOOLEAN NOT NULL DEFAULT FALSE")
         add_column_if_missing("products", "priced_at",           "TIMESTAMPTZ")
+        add_column_if_missing("products", "pricing_status",      "VARCHAR NOT NULL DEFAULT 'unpriced'")
+        add_column_if_missing("products", "priced_by",           "UUID REFERENCES users(id) ON DELETE SET NULL")
         add_column_if_missing("products", "store_id",
             "UUID REFERENCES stores(id) ON DELETE SET NULL")
 
