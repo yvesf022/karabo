@@ -208,6 +208,142 @@ class DeleteFromPricingRequest(BaseModel):
 # ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════════════════════
+# LIST ALL PRODUCTS FOR PRICING  (frontend calls GET /api/products/admin/pricing/all)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/products/admin/pricing/all")
+def list_all_products_for_pricing(
+    search:   str  = "",
+    category: str  = "",
+    brand:    str  = "",
+    limit:    int  = 2000,
+    offset:   int  = 0,
+    db:       Session = Depends(get_db),
+    admin = Depends(get_current_admin),
+):
+    """
+    Return all non-deleted products with their current pricing status.
+    Used exclusively by the Admin Pricing Tool frontend.
+    Results are sorted: unpriced first, then ai_suggested, then admin_approved.
+    """
+    from sqlalchemy import or_, case as sql_case
+
+    q = db.query(Product).filter(Product.is_deleted == False)
+
+    if search:
+        q = q.filter(Product.title.ilike(f"%{search}%"))
+    if category:
+        q = q.filter(Product.category == category)
+    if brand:
+        q = q.filter(Product.brand == brand)
+
+    total = q.count()
+
+    # Sort: unpriced/rejected first → ai_suggested → admin_approved
+    order_expr = sql_case(
+        (Product.pricing_status == "admin_approved", 2),
+        (Product.pricing_status == "ai_suggested",   1),
+        else_=0,
+    )
+    products = q.order_by(order_expr, Product.title).offset(offset).limit(limit).all()
+
+    results = [
+        {
+            "id":             str(p.id),
+            "title":          p.title,
+            "brand":          getattr(p, "brand", None),
+            "category":       getattr(p, "category", None) or getattr(p, "main_category", None),
+            "price":          p.price,
+            "compare_price":  p.compare_price,
+            "stock":          getattr(p, "stock", 0) or 0,
+            "status":         str(p.status) if p.status else "active",
+            "is_priced":      bool(p.is_priced),
+            "pricing_status": p.pricing_status or ("admin_approved" if p.is_priced else "unpriced"),
+            "priced_at":      p.priced_at.isoformat() if p.priced_at else None,
+            "main_image":     p.main_image,
+        }
+        for p in products
+    ]
+
+    return {"results": results, "total": total, "loaded": len(results)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RESET BULK-PRICED PRODUCTS BACK TO UNPRICED
+# Targets products where is_priced=TRUE but priced_by IS NULL
+# (i.e. set via bulk_price_update.py, never manually confirmed by an admin)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/products/admin/pricing/reset-bulk-unpriced")
+def reset_bulk_priced_to_unpriced(
+    db:    Session = Depends(get_db),
+    admin = Depends(get_current_admin),
+):
+    """
+    Resets all products that were bulk-priced (is_priced=TRUE, priced_by=NULL)
+    back to unpriced so the admin can confirm them one by one in the pricing tool.
+
+    Safe to run multiple times — only touches products with no admin who approved them.
+    """
+    from sqlalchemy import text as _text
+
+    result = db.execute(_text("""
+        UPDATE products
+        SET
+            is_priced      = FALSE,
+            pricing_status = 'unpriced',
+            priced_at      = NULL
+        WHERE is_deleted  = FALSE
+          AND is_priced   = TRUE
+          AND priced_by   IS NULL
+    """))
+    db.commit()
+
+    affected = result.rowcount
+    return {
+        "reset":   affected,
+        "message": f"{affected} bulk-priced products reset to unpriced — they now require admin confirmation.",
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LIGHTWEIGHT POLL ENDPOINT  — returns only id + pricing_status + price
+# Used by frontend every 30s to sync across devices without a full reload
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/products/admin/pricing/poll")
+def poll_pricing_status(
+    db:    Session = Depends(get_db),
+    admin = Depends(get_current_admin),
+):
+    """
+    Returns minimal pricing status for ALL non-deleted products.
+    Very cheap query — only 5 columns, no joins.
+    Frontend uses this every 30s to sync approvals made on another device.
+    """
+    items = db.query(
+        Product.id,
+        Product.pricing_status,
+        Product.is_priced,
+        Product.price,
+        Product.compare_price,
+    ).filter(Product.is_deleted == False).all()
+
+    return {
+        "items": [
+            {
+                "id":             str(r.id),
+                "pricing_status": r.pricing_status or ("admin_approved" if r.is_priced else "unpriced"),
+                "is_priced":      bool(r.is_priced),
+                "price":          r.price,
+                "compare_price":  r.compare_price,
+            }
+            for r in items
+        ]
+    }
+
+
 @router.get("/products/admin/auto-price/rate")
 async def get_rate(admin=Depends(get_current_admin)):
     """Return live INR → LSL exchange rate plus its source."""
