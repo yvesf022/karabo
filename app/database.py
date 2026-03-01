@@ -195,6 +195,8 @@ def init_database():
         add_column_if_missing("products", "priced_by",           "UUID REFERENCES users(id) ON DELETE SET NULL")
         add_column_if_missing("products", "store_id",
             "UUID REFERENCES stores(id) ON DELETE SET NULL")
+        add_column_if_missing("products", "tags",
+            "JSON")                                        # collection tags array
 
         # ==================================================
         # 🔥 AUTO-SYNC PRODUCT_IMAGES TABLE

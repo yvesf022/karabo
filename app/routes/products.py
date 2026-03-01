@@ -62,6 +62,7 @@ def _serialize_product(p: Product, admin: bool = False) -> dict:
         "category":          p.category,
         "main_category":     p.main_category,
         "categories":        p.categories,
+        "tags":              p.tags or [],
         "features":          p.features,
         "details":           p.details,
         "stock":             p.stock,
@@ -100,6 +101,7 @@ def list_products(
     brand:         Optional[str]   = None,
     store:         Optional[str]   = None,
     store_id:      Optional[str]   = None,
+    tag:           Optional[str]   = None,   # collection tag e.g. "anti_aging", "brightening"
     min_price:     Optional[float] = None,
     max_price:     Optional[float] = None,
     in_stock:      Optional[bool]  = None,
@@ -134,6 +136,13 @@ def list_products(
         query = query.filter(Product.stock > 0 if in_stock else Product.stock <= 0)
     if min_rating is not None:
         query = query.filter(Product.rating >= min_rating)
+    # Filter by collection tag — uses PostgreSQL JSON array containment: tags @> '["tag"]'
+    if tag:
+        from sqlalchemy import cast
+        from sqlalchemy.dialects.postgresql import JSONB
+        query = query.filter(
+            func.cast(Product.tags, JSONB).contains(cast(f'["{tag}"]', JSONB))
+        )
 
     sort_map = {
         "price_asc":  Product.price.asc(),
@@ -168,6 +177,7 @@ def list_products(
                  "rating":        p.rating,
                  "rating_number": p.rating_number,
                  "category":      p.category,
+                 "tags":          p.tags or [],
                  "stock":         p.stock,
                  "in_stock":      p.stock > 0,
                  "main_image":    getattr(p, "main_image", None) or getattr(p, "image_url", None) or next((img.image_url for img in p.images if img.is_primary), None) or (p.images[0].image_url if p.images else None),
@@ -908,6 +918,11 @@ async def bulk_upload_products(
             # Parse all fields first (needed for both insert and upsert)
             parent_asin = (row.get("parent_asin") or "").strip()
 
+            # Parse collection tags from the "collections" column
+            # CSV format: "anti_aging,brightening,sunscreen"
+            raw_collections = (row.get("collections") or row.get("tags") or "").strip()
+            tags = [t.strip() for t in raw_collections.split(",") if t.strip()] if raw_collections else []
+
             # JSON fields
             categories = safe_json(row.get("categories"), [])
             features   = safe_json(row.get("features"),   [])
@@ -968,6 +983,7 @@ async def bulk_upload_products(
                 existing.in_stock            = stock > 0
                 existing.status              = status
                 existing.low_stock_threshold = low_stock_threshold
+                existing.tags                = tags if tags else existing.tags
                 product = existing
                 # Replace images if new ones provided
                 image_urls = [u.strip() for u in (row.get("image_urls") or "").split(",") if u.strip()]
@@ -1018,7 +1034,7 @@ async def bulk_upload_products(
                     status              = status,
                     is_deleted          = False,
                     low_stock_threshold = low_stock_threshold,
-                )
+                    tags                = tags if tags else [],
                 db.add(product)
                 db.flush()
                 # Add images — prefer image_urls column, fall back to raw_json.images[].hi_res

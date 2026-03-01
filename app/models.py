@@ -130,6 +130,7 @@ class Product(Base):
     category = Column(String, index=True)
     main_category = Column(String, index=True)
     categories = Column(JSON)
+    tags       = Column(JSON)   # collection tags: ["anti_aging","brightening","sunscreen",...]
     specs = Column(JSON)
     details = Column(JSON)
     features = Column(JSON)
