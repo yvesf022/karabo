@@ -1035,6 +1035,7 @@ async def bulk_upload_products(
                     is_deleted          = False,
                     low_stock_threshold = low_stock_threshold,
                     tags                = tags if tags else [],
+                )
                 db.add(product)
                 db.flush()
                 # Add images — prefer image_urls column, fall back to raw_json.images[].hi_res
