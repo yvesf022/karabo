@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.database import get_db
 
-router = APIRouter(prefix="/api", tags=["categories-brands"])
+router = APIRouter(tags=["categories-brands"])
 
 @router.get("/categories")
 def get_categories(db: Session = Depends(get_db)):
