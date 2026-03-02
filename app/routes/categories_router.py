@@ -61,15 +61,7 @@ BEAUTY_SUBCATS = [
     ("lip_mask",         "Lip Masks"),
 ]
 
-PHONE_SUBCATS = [
-    ("samsung",  "Samsung"),
-    ("apple",    "Apple"),
-    ("xiaomi",   "Xiaomi"),
-    ("motorola", "Motorola"),
-    ("oneplus",  "OnePlus"),
-    ("google",   "Google Pixel"),
-    ("realme",   "Realme"),
-]
+PHONE_SUBCATS: list = []  # No phone products in this store
 
 
 def _make_href(field: str, value: str) -> str:
@@ -120,38 +112,6 @@ def get_categories() -> JSONResponse:
             "subcategories": beauty_subs,
         })
 
-        # ── PHONES ─────────────────────────────────────────────
-        phone_subs = []
-        for key, label in PHONE_SUBCATS:
-            row = db.execute(text("""
-                SELECT COALESCE(main_image, image_url) as img
-                FROM products
-                WHERE category = :key
-                  AND is_deleted = FALSE
-                  AND COALESCE(main_image, image_url) IS NOT NULL
-                ORDER BY rating DESC NULLS LAST
-                LIMIT 1
-            """), {"key": key}).fetchone()
-
-            phone_subs.append({
-                "key":   key,
-                "label": label,
-                "href":  _make_href("category", key),
-                "image": row[0] if row else None,
-            })
-
-        phones_img = next(
-            (s["image"] for s in phone_subs if s["image"]), None
-        )
-
-        result.append({
-            "key":           "phones",
-            "title":         "Cell Phones & Accessories",
-            "href":          "/store?main_cat=phones",
-            "image":         phones_img,
-            "subcategories": phone_subs,
-        })
-
         return JSONResponse(content=result)
 
     finally:
@@ -164,7 +124,7 @@ BEAUTY_SLUGS = [
     "eye_mask","anti_acne","skin_brightening","collagen","skin_natural_oils",
     "herbal_oils","anti_wrinkles","body_wash","exfoliator","lip_mask",
 ]
-PHONE_SLUGS = ["samsung","apple","xiaomi","motorola","oneplus","google","realme"]
+PHONE_SLUGS: list = []  # No phones in this store
 
 
 @router.get("/products/by-department/{dept}")
