@@ -284,6 +284,63 @@ def init_database():
     import app.models  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
+    # ==================================================
+    # 🔥 SEED BEAUTY CATEGORIES (idempotent — safe to re-run)
+    # These are the 20 category slugs that match products.category
+    # and are used by the store frontend filters, sidebar, and
+    # the category nav. Uses ON CONFLICT DO NOTHING so re-runs
+    # after the initial boot are zero-cost.
+    # ==================================================
+
+    BEAUTY_CATEGORIES = [
+        # (slug,                  display_name,               description,                                                   position)
+        ("anti_aging",          "Anti-Aging",           "Retinol, collagen boosters & wrinkle-fighting treatments",            1),
+        ("acne",                "Acne Care",             "Spot treatments, pore cleansers & acne-fighting formulas",           2),
+        ("brightening",         "Brightening",           "Vitamin C, niacinamide & glow-enhancing serums",                     3),
+        ("whitening",           "Whitening",             "Glutathione, kojic acid & skin-lightening treatments",               4),
+        ("hydration",           "Hydration",             "Moisturisers, hyaluronic acid & daily hydration essentials",         5),
+        ("repair",              "Repair & Restore",      "Healing creams, recovery serums & barrier repair",                   6),
+        ("barrier",             "Skin Barrier",          "Ceramide creams & microbiome-protecting formulas",                   7),
+        ("eczema",              "Eczema Relief",         "Gentle formulas for sensitive, eczema-prone skin",                   8),
+        ("rosacea",             "Rosacea Care",          "Calming, redness-reducing treatments for rosacea skin",              9),
+        ("scar",                "Scar & Dark Spots",     "Scar gels, dark spot correctors & hyperpigmentation solutions",     10),
+        ("stretch_mark",        "Stretch Marks",         "Creams, oils & treatments for stretch marks",                       11),
+        ("sunscreen",           "Sunscreen",             "SPF face & body protection for all skin types",                     12),
+        ("oils",                "Facial & Body Oils",    "Natural, pure & blended oils for skin and hair",                    13),
+        ("soaps",               "Soaps & Cleansers",     "Bar soaps, cleansing bars & deep-cleansing formulas",               14),
+        ("body",                "Body Care",             "Body lotions, washes, hand & foot care essentials",                 15),
+        ("masks",               "Masks & Treatments",   "Sheet masks, clay masks & overnight skin treatments",               16),
+        ("exfoliation",         "Exfoliation",           "Scrubs, peels, toner pads & enzyme exfoliants",                    17),
+        ("clinical_acids",      "Clinical Acids",        "AHAs, BHAs, glycolic & lactic acid treatments",                    18),
+        ("african_ingredients", "African Ingredients",   "Shea butter, marula, baobab & African botanical extracts",         19),
+        ("korean_ingredients",  "Korean Ingredients",    "K-beauty essentials: snail, centella, ginseng & more",             20),
+    ]
+
+    with engine.begin() as conn:
+        # Ensure categories table has a unique constraint on slug
+        conn.execute(text("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.table_constraints
+                    WHERE table_name = 'categories' AND constraint_type = 'UNIQUE'
+                    AND constraint_name = 'categories_slug_key'
+                ) THEN
+                    ALTER TABLE categories ADD CONSTRAINT categories_slug_key UNIQUE (slug);
+                END IF;
+            END $$;
+        """))
+
+        for slug, name, desc, pos in BEAUTY_CATEGORIES:
+            conn.execute(text("""
+                INSERT INTO categories (id, name, slug, description, is_active, position)
+                VALUES (gen_random_uuid(), :name, :slug, :desc, true, :pos)
+                ON CONFLICT (slug) DO UPDATE
+                    SET name        = EXCLUDED.name,
+                        description = EXCLUDED.description,
+                        is_active   = true,
+                        position    = EXCLUDED.position
+            """), {"name": name, "slug": slug, "desc": desc, "pos": pos})
+
     print("✅ Database verified (enums, tables, indexes, FKs)")
     print("🔥 All tables auto-synced successfully")
     print("🏬 Stores table ready")
@@ -291,3 +348,4 @@ def init_database():
     print("🛒 Cart, Wishlist, Reviews tables ready")
     print("💰 Wallet, Coupons, Notifications tables ready")
     print("📦 Enterprise features initialized")
+    print("🎨 20 beauty categories seeded ✅")

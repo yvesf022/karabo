@@ -941,12 +941,69 @@ async def bulk_upload_products(
             compare_price_raw = row.get("compare_price", "")
             compare_price     = float(compare_price_raw) if compare_price_raw else None
 
-            # CSV uses column name "matched_category", not "category"
-            category = (
-                row.get("category")
-                or row.get("matched_category")
-                or (categories[0] if isinstance(categories, list) and categories else "")
-                or ""
+            # ── CATEGORY: derive from collections tags (priority) ──────────────
+            # The CSV `collections` column holds comma-separated tags like
+            # "anti_aging,brightening,hydration". We use the FIRST tag as the
+            # primary category slug because that is what the store filter queries.
+            # This means products.category always matches one of the 20 slugs.
+            #
+            # Fallback keyword matching covers the 123 products with no collections.
+            # ─────────────────────────────────────────────────────────────────────
+
+            _DIRECT_MAP = {
+                "anti_aging":"anti_aging","anti-aging":"anti_aging","antiaging":"anti_aging",
+                "acne":"acne","brightening":"brightening","whitening":"whitening",
+                "hydration":"hydration","repair":"repair","barrier":"barrier",
+                "eczema":"eczema","rosacea":"rosacea","scar":"scar",
+                "stretch_mark":"stretch_mark","stretch_marks":"stretch_mark",
+                "sunscreen":"sunscreen","oils":"oils","soaps":"soaps","body":"body",
+                "masks":"masks","exfoliation":"exfoliation","exfoliator":"exfoliation",
+                "clinical_acids":"clinical_acids",
+                "african_ingredients":"african_ingredients","african":"african_ingredients",
+                "korean_ingredients":"korean_ingredients","korean":"korean_ingredients",
+            }
+            _KEYWORD_RULES = [
+                ("stretch_mark",        ["stretch mark","stretchmark","stretch-mark"]),
+                ("eczema",              ["eczema","atopic dermatitis"]),
+                ("rosacea",             ["rosacea"]),
+                ("sunscreen",           ["sunscreen","sunblock","spf 50","spf 30","sun protection"]),
+                ("clinical_acids",      ["glycolic acid","lactic acid","aha bha","chemical peel"]),
+                ("acne",                ["acne","pimple","blemish","benzoyl peroxide"]),
+                ("whitening",           ["whitening","glutathione","skin lightening","skin whitening"]),
+                ("anti_aging",          ["retinol","collagen","wrinkle","firming","anti-aging","anti-wrinkle"]),
+                ("barrier",             ["ceramide","skin barrier","moisture barrier"]),
+                ("korean_ingredients",  ["korean","k-beauty","snail mucin","centella","mugwort"]),
+                ("african_ingredients", ["shea butter","marula","baobab","argan oil","rosehip"]),
+                ("brightening",         ["brightening","vitamin c","niacinamide","radiance","glow"]),
+                ("oils",                ["face oil","body oil","argan oil","rosehip oil","jojoba oil"]),
+                ("soaps",               ["bar soap","kojic soap"," soap "]),
+                ("masks",               ["face mask","sheet mask","clay mask","sleeping mask"]),
+                ("exfoliation",         ["exfoliat","scrub"]),
+                ("body",                ["body lotion","body cream","body wash","shower gel","hand cream"]),
+                ("repair",              ["repair","healing","recovery","soothing cream"]),
+                ("scar",                ["scar","hyperpigmentation","dark spot corrector"]),
+                ("hydration",           ["hyaluronic","hydrat","moisturi","toner","essence","lotion"]),
+            ]
+
+            def _derive_category(tags_list, title_text, cat_text):
+                # 1. First matching tag wins
+                for t in tags_list:
+                    tl = t.strip().lower()
+                    if tl in _DIRECT_MAP:
+                        return _DIRECT_MAP[tl]
+                # 2. Keyword fallback on title + categories string
+                full = (title_text + " " + cat_text).lower()
+                for cat, kws in _KEYWORD_RULES:
+                    for kw in kws:
+                        if kw in full:
+                            return cat
+                # 3. Default: hydration (most general beauty bucket)
+                return "hydration"
+
+            category = _derive_category(
+                tags,
+                title,
+                row.get("categories", ""),
             )
 
             # Status — validate against allowed values
