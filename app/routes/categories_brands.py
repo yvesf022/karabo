@@ -20,17 +20,21 @@ def get_categories(db: Session = Depends(get_db)):
     Returns all categories currently used by active products.
     If a product has no category or is NULL, it's grouped under 'Others'.
     """
-    # This query pulls all unique categories from your 1,000 products.
-    # COALESCE(category, 'others') ensures that if 'category' is empty, it becomes 'others'.
+    # Normalize at query level: lowercase + replace spaces/dashes with underscores.
+    # This collapses "Anti Aging", "anti-aging", "anti_aging" into the same slug,
+    # so the filter URL always matches DB values regardless of how they were stored.
     query = text("""
         SELECT 
-            COALESCE(NULLIF(TRIM(category), ''), 'others') as cat_name,
+            COALESCE(
+                NULLIF(TRIM(LOWER(REPLACE(REPLACE(category, ' ', '_'), '-', '_'))), ''),
+                'others'
+            ) AS cat_slug,
             COUNT(*) as product_count
         FROM products
         WHERE status = 'active' 
           AND is_deleted = FALSE 
           AND stock > 0
-        GROUP BY cat_name
+        GROUP BY cat_slug
         ORDER BY product_count DESC
     """)
     
@@ -38,16 +42,18 @@ def get_categories(db: Session = Depends(get_db)):
     
     categories = []
     for r in rows:
-        slug = r[0].lower().replace(" ", "_")
-        name = r[0].title()
+        # r[0] is now already a normalized slug (e.g. "anti_aging")
+        # derived from the SQL normalization above.
+        slug = r[0]
+        name = slug.replace("_", " ").title()   # "anti_aging" → "Anti Aging"
         
         categories.append({
-            "id": slug,
-            "name": name,
-            "slug": slug,
+            "id":            slug,
+            "name":          name,
+            "slug":          slug,
             "product_count": r[1],
-            "description": f"Browse our selection of {name} products.",
-            "image_url": None  # Can be mapped to a static asset if needed
+            "description":   f"Browse our selection of {name} products.",
+            "image_url":     None,
         })
         
     return categories
@@ -57,23 +63,23 @@ def get_category_detail(slug: str, db: Session = Depends(get_db)):
     """
     Returns details for a specific category.
     """
-    # Handle the 'others' case specifically
-    cat_filter = slug.replace("_", " ")
-    
+    # After backfill migration, DB values are clean slugs.
+    # Query with the slug directly — no underscore→space replacement.
     if slug == "others":
         query = text("""
             SELECT COUNT(*) FROM products 
-            WHERE (category IS NULL OR category = '' OR category = 'others')
+            WHERE (category IS NULL OR TRIM(category) = '' OR category = 'others')
               AND status = 'active' AND is_deleted = FALSE AND stock > 0
         """)
+        row = db.execute(query).fetchone()
     else:
+        # Match by exact slug OR case-insensitive for robustness during transition
         query = text("""
             SELECT COUNT(*) FROM products 
-            WHERE LOWER(category) = LOWER(:cat)
+            WHERE LOWER(TRIM(category)) = LOWER(TRIM(:cat))
               AND status = 'active' AND is_deleted = FALSE AND stock > 0
         """)
-
-    row = db.execute(query, {"cat": cat_filter}).fetchone()
+        row = db.execute(query, {"cat": slug}).fetchone()
     count = row[0] if row else 0
     
     if count == 0:

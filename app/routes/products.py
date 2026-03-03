@@ -19,6 +19,114 @@ from app.uploads.service import handle_upload
 router = APIRouter(prefix="/products", tags=["products"])
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# CATEGORY SYSTEM — SINGLE SOURCE OF TRUTH
+# All 20 valid category slugs live here. Any product whose tags/title/description
+# cannot be matched to one of these is assigned "others" automatically.
+# Every write path (bulk import, create, update, bulk-category) calls
+# normalize_category() so bad slugs can never reach the database.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+VALID_CATEGORIES: set[str] = {
+    "anti_aging", "acne", "brightening", "whitening", "hydration",
+    "repair", "barrier", "eczema", "rosacea", "scar",
+    "stretch_mark", "sunscreen", "oils", "soaps", "body",
+    "masks", "exfoliation", "clinical_acids",
+    "african_ingredients", "korean_ingredients",
+    "others",  # catch-all for products that don't fit the 20 above
+}
+
+# Direct slug aliases → canonical slug
+_DIRECT_MAP: dict[str, str] = {
+    "anti_aging": "anti_aging", "anti-aging": "anti_aging", "antiaging": "anti_aging",
+    "acne": "acne",
+    "brightening": "brightening",
+    "whitening": "whitening",
+    "hydration": "hydration",
+    "repair": "repair",
+    "barrier": "barrier",
+    "eczema": "eczema",
+    "rosacea": "rosacea",
+    "scar": "scar",
+    "stretch_mark": "stretch_mark", "stretch_marks": "stretch_mark",
+    "sunscreen": "sunscreen",
+    "oils": "oils",
+    "soaps": "soaps",
+    "body": "body",
+    "masks": "masks",
+    "exfoliation": "exfoliation", "exfoliator": "exfoliation",
+    "clinical_acids": "clinical_acids",
+    "african_ingredients": "african_ingredients", "african": "african_ingredients",
+    "korean_ingredients": "korean_ingredients", "korean": "korean_ingredients",
+    "others": "others",
+}
+
+# Keyword rules: checked against (title + categories string) when no direct tag matches
+_KEYWORD_RULES: list[tuple[str, list[str]]] = [
+    ("stretch_mark",        ["stretch mark", "stretchmark", "stretch-mark"]),
+    ("eczema",              ["eczema", "atopic dermatitis"]),
+    ("rosacea",             ["rosacea"]),
+    ("sunscreen",           ["sunscreen", "sunblock", "spf 50", "spf 30", "sun protection"]),
+    ("clinical_acids",      ["glycolic acid", "lactic acid", "aha bha", "chemical peel"]),
+    ("acne",                ["acne", "pimple", "blemish", "benzoyl peroxide"]),
+    ("whitening",           ["whitening", "glutathione", "skin lightening", "skin whitening"]),
+    ("anti_aging",          ["retinol", "collagen", "wrinkle", "firming", "anti-aging", "anti-wrinkle"]),
+    ("barrier",             ["ceramide", "skin barrier", "moisture barrier"]),
+    ("korean_ingredients",  ["korean", "k-beauty", "snail mucin", "centella", "mugwort"]),
+    ("african_ingredients", ["shea butter", "marula", "baobab", "argan oil", "rosehip"]),
+    ("brightening",         ["brightening", "vitamin c", "niacinamide", "radiance", "glow"]),
+    ("oils",                ["face oil", "body oil", "argan oil", "rosehip oil", "jojoba oil"]),
+    ("soaps",               ["bar soap", "kojic soap", " soap "]),
+    ("masks",               ["face mask", "sheet mask", "clay mask", "sleeping mask"]),
+    ("exfoliation",         ["exfoliat", "scrub"]),
+    ("body",                ["body lotion", "body cream", "body wash", "shower gel", "hand cream"]),
+    ("repair",              ["repair", "healing", "recovery", "soothing cream"]),
+    ("scar",                ["scar", "hyperpigmentation", "dark spot corrector"]),
+    ("hydration",           ["hyaluronic", "hydrat", "moisturi", "toner", "essence", "lotion"]),
+]
+
+
+def normalize_category(
+    raw: str | None = None,
+    *,
+    tags: list[str] | None = None,
+    title: str = "",
+    categories_text: str = "",
+) -> str:
+    """
+    Smart category normalizer — single source of truth for every write path.
+
+    Resolution order:
+      1. If `raw` is already a known valid slug → return it as-is.
+      2. If `tags` list provided → first tag that maps directly wins.
+      3. Keyword scan across (title + categories_text).
+      4. Fallback → "others"  (never silently pollutes a real category).
+    """
+    # 1. Direct slug match on the raw value
+    if raw:
+        cleaned = raw.strip().lower().replace(" ", "_").replace("-", "_")
+        if cleaned in VALID_CATEGORIES:
+            return cleaned
+        if cleaned in _DIRECT_MAP:
+            return _DIRECT_MAP[cleaned]
+
+    # 2. First matching tag wins
+    for tag in (tags or []):
+        tl = tag.strip().lower()
+        if tl in _DIRECT_MAP:
+            return _DIRECT_MAP[tl]
+
+    # 3. Keyword scan
+    full = (title + " " + categories_text).lower()
+    for cat, keywords in _KEYWORD_RULES:
+        for kw in keywords:
+            if kw in full:
+                return cat
+
+    # 4. Nothing matched → others
+    return "others"
+
+
 # ─────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────
@@ -119,6 +227,7 @@ def list_products(
         _like = f"%{search}%"
         query = query.filter(or_(Product.title.ilike(_like), Product.short_description.ilike(_like), Product.brand.ilike(_like)))
     if category:
+        category = normalize_category(raw=category)  # guard: normalize before DB query
         query = query.filter(Product.category == category)
     if main_category:
         query = query.filter(Product.main_category == main_category)
@@ -228,6 +337,7 @@ def admin_list_products(
     if brand:
         query = query.filter(Product.brand == brand)
     if category:
+        category = normalize_category(raw=category)  # guard: normalize before DB query
         query = query.filter(Product.category == category)
     if rating is not None:
         query = query.filter(Product.rating >= rating)
@@ -332,6 +442,7 @@ def pricing_all_products(
             or_(Product.title.ilike(q), Product.brand.ilike(q), Product.sku.ilike(q))
         )
     if category:
+        category = normalize_category(raw=category)  # guard: normalize before DB query
         query = query.filter(Product.category == category)
     if brand:
         query = query.filter(Product.brand == brand)
@@ -526,7 +637,11 @@ def create_product(payload: dict, db: Session = Depends(get_db), admin=Depends(r
         brand             = payload.get("brand"),
         price             = float(payload.get("price", 0)),
         compare_price     = payload.get("compare_price"),
-        category          = payload.get("category", ""),
+        category          = normalize_category(
+                                raw=payload.get("category", ""),
+                                title=payload.get("title", ""),
+                                categories_text=str(payload.get("categories", "")),
+                            ),
         main_category     = payload.get("main_category", ""),
         categories        = payload.get("categories", []),
         features          = payload.get("features", []),
@@ -563,6 +678,13 @@ def update_product(product_id: str, payload: dict, db: Session = Depends(get_db)
     if not product:
         raise HTTPException(404, "Product not found")
     before = _product_snapshot(product)
+
+    # Normalize category before applying — prevents invalid slugs from entering the DB
+    if "category" in payload and payload["category"] is not None:
+        payload["category"] = normalize_category(
+            raw=payload.get("category", ""),
+            title=payload.get("title", product.title),
+        )
 
     # Whitelist updatable fields to prevent accidents
     allowed = {
@@ -653,7 +775,7 @@ def bulk_mutate(payload: dict, db: Session = Depends(get_db), admin=Depends(requ
                 p.price         = round(p.price * (1 - pct / 100), 2)
         elif action == "category":
             if payload.get("category"):
-                p.category = payload["category"]
+                p.category = normalize_category(raw=payload["category"])
             if payload.get("main_category"):
                 p.main_category = payload["main_category"]
         elif action == "store":
@@ -785,9 +907,10 @@ def bulk_category(payload: dict, db: Session = Depends(get_db), admin=Depends(re
     category      = payload.get("category")
     main_category = payload.get("main_category")
     products = db.query(Product).filter(Product.id.in_(ids)).all()
+    normalized = normalize_category(raw=category) if category else None
     for p in products:
-        if category:
-            p.category = category
+        if normalized:
+            p.category = normalized
         if main_category:
             p.main_category = main_category
     db.commit()
@@ -830,12 +953,12 @@ async def bulk_upload_products(
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(400, "File must be .csv format")
 
-    # Size check: 100MB max for CSV
+    # Size check: 10MB max for CSV
     file.file.seek(0, 2)
     size = file.file.tell()
     file.file.seek(0)
-    if size > 100 * 1024 * 1024:
-        raise HTTPException(400, "CSV file must not exceed 100MB")
+    if size > 10 * 1024 * 1024:
+        raise HTTPException(400, "CSV file must not exceed 10MB")
 
     upload_record = BulkUpload(
         filename=file.filename,
@@ -941,69 +1064,16 @@ async def bulk_upload_products(
             compare_price_raw = row.get("compare_price", "")
             compare_price     = float(compare_price_raw) if compare_price_raw else None
 
-            # ── CATEGORY: derive from collections tags (priority) ──────────────
-            # The CSV `collections` column holds comma-separated tags like
-            # "anti_aging,brightening,hydration". We use the FIRST tag as the
-            # primary category slug because that is what the store filter queries.
-            # This means products.category always matches one of the 20 slugs.
-            #
-            # Fallback keyword matching covers the 123 products with no collections.
+            # ── CATEGORY: derive using the module-level normalize_category() ──
+            # Checks tags → keyword scan → falls back to "others" (never silently
+            # pollutes a real category with unrelated products).
             # ─────────────────────────────────────────────────────────────────────
 
-            _DIRECT_MAP = {
-                "anti_aging":"anti_aging","anti-aging":"anti_aging","antiaging":"anti_aging",
-                "acne":"acne","brightening":"brightening","whitening":"whitening",
-                "hydration":"hydration","repair":"repair","barrier":"barrier",
-                "eczema":"eczema","rosacea":"rosacea","scar":"scar",
-                "stretch_mark":"stretch_mark","stretch_marks":"stretch_mark",
-                "sunscreen":"sunscreen","oils":"oils","soaps":"soaps","body":"body",
-                "masks":"masks","exfoliation":"exfoliation","exfoliator":"exfoliation",
-                "clinical_acids":"clinical_acids",
-                "african_ingredients":"african_ingredients","african":"african_ingredients",
-                "korean_ingredients":"korean_ingredients","korean":"korean_ingredients",
-            }
-            _KEYWORD_RULES = [
-                ("stretch_mark",        ["stretch mark","stretchmark","stretch-mark"]),
-                ("eczema",              ["eczema","atopic dermatitis"]),
-                ("rosacea",             ["rosacea"]),
-                ("sunscreen",           ["sunscreen","sunblock","spf 50","spf 30","sun protection"]),
-                ("clinical_acids",      ["glycolic acid","lactic acid","aha bha","chemical peel"]),
-                ("acne",                ["acne","pimple","blemish","benzoyl peroxide"]),
-                ("whitening",           ["whitening","glutathione","skin lightening","skin whitening"]),
-                ("anti_aging",          ["retinol","collagen","wrinkle","firming","anti-aging","anti-wrinkle"]),
-                ("barrier",             ["ceramide","skin barrier","moisture barrier"]),
-                ("korean_ingredients",  ["korean","k-beauty","snail mucin","centella","mugwort"]),
-                ("african_ingredients", ["shea butter","marula","baobab","argan oil","rosehip"]),
-                ("brightening",         ["brightening","vitamin c","niacinamide","radiance","glow"]),
-                ("oils",                ["face oil","body oil","argan oil","rosehip oil","jojoba oil"]),
-                ("soaps",               ["bar soap","kojic soap"," soap "]),
-                ("masks",               ["face mask","sheet mask","clay mask","sleeping mask"]),
-                ("exfoliation",         ["exfoliat","scrub"]),
-                ("body",                ["body lotion","body cream","body wash","shower gel","hand cream"]),
-                ("repair",              ["repair","healing","recovery","soothing cream"]),
-                ("scar",                ["scar","hyperpigmentation","dark spot corrector"]),
-                ("hydration",           ["hyaluronic","hydrat","moisturi","toner","essence","lotion"]),
-            ]
-
-            def _derive_category(tags_list, title_text, cat_text):
-                # 1. First matching tag wins
-                for t in tags_list:
-                    tl = t.strip().lower()
-                    if tl in _DIRECT_MAP:
-                        return _DIRECT_MAP[tl]
-                # 2. Keyword fallback on title + categories string
-                full = (title_text + " " + cat_text).lower()
-                for cat, kws in _KEYWORD_RULES:
-                    for kw in kws:
-                        if kw in full:
-                            return cat
-                # 3. Default: hydration (most general beauty bucket)
-                return "hydration"
-
-            category = _derive_category(
-                tags,
-                title,
-                row.get("categories", ""),
+            category = normalize_category(
+                raw=row.get("category") or row.get("main_category") or "",
+                tags=tags,
+                title=title,
+                categories_text=row.get("categories", ""),
             )
 
             # Status — validate against allowed values
@@ -1202,6 +1272,25 @@ async def import_validate(file: UploadFile = File(...), db: Session = Depends(ge
         if asin and db.query(Product).filter(Product.parent_asin == asin).first():
             warnings.append({"row": idx, "field": "parent_asin", "warning": f"Duplicate ASIN: {asin}"})
 
+        # Category check: warn if it will fall through to "others"
+        raw_collections = (row.get("collections") or row.get("tags") or "").strip()
+        tags_preview = [t.strip() for t in raw_collections.split(",") if t.strip()]
+        resolved = normalize_category(
+            raw=row.get("category") or row.get("main_category") or "",
+            tags=tags_preview,
+            title=row.get("title", ""),
+            categories_text=row.get("categories", ""),
+        )
+        if resolved == "others":
+            warnings.append({
+                "row": idx,
+                "field": "category",
+                "warning": (
+                    f"No matching category found — will be assigned 'others'. "
+                    f"Add a collections tag or category value to place it in one of the 20 categories."
+                ),
+            })
+
     return {
         "total_rows": len(rows),
         "errors":     errors,
@@ -1253,6 +1342,7 @@ def export_products(
     if store:
         query = query.filter(Product.store == store)
     if category:
+        category = normalize_category(raw=category)  # guard: normalize before DB query
         query = query.filter(Product.category == category)
     products = query.order_by(Product.created_at.desc()).all()
 

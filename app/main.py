@@ -184,6 +184,53 @@ def startup():
               AND (pricing_status IS NULL OR pricing_status = 'unpriced')
         """))
 
+        # ✅ CATEGORY BACKFILL — normalize all dirty category values to clean slugs.
+        # Runs on every startup but the WHERE clause skips already-clean products,
+        # so it's a no-op once all rows are normalised.
+        # Maps known variants → canonical slug; anything unrecognised → 'others'.
+        db.execute(text("""
+            UPDATE products
+            SET category = CASE
+                LOWER(TRIM(REPLACE(REPLACE(COALESCE(category, ''), '-', '_'), ' ', '_')))
+                WHEN 'anti_aging'           THEN 'anti_aging'
+                WHEN 'antiaging'            THEN 'anti_aging'
+                WHEN 'acne'                 THEN 'acne'
+                WHEN 'brightening'          THEN 'brightening'
+                WHEN 'whitening'            THEN 'whitening'
+                WHEN 'hydration'            THEN 'hydration'
+                WHEN 'repair'               THEN 'repair'
+                WHEN 'barrier'              THEN 'barrier'
+                WHEN 'eczema'               THEN 'eczema'
+                WHEN 'rosacea'              THEN 'rosacea'
+                WHEN 'scar'                 THEN 'scar'
+                WHEN 'stretch_mark'         THEN 'stretch_mark'
+                WHEN 'stretch_marks'        THEN 'stretch_mark'
+                WHEN 'sunscreen'            THEN 'sunscreen'
+                WHEN 'oils'                 THEN 'oils'
+                WHEN 'soaps'                THEN 'soaps'
+                WHEN 'body'                 THEN 'body'
+                WHEN 'masks'                THEN 'masks'
+                WHEN 'exfoliation'          THEN 'exfoliation'
+                WHEN 'exfoliator'           THEN 'exfoliation'
+                WHEN 'clinical_acids'       THEN 'clinical_acids'
+                WHEN 'african_ingredients'  THEN 'african_ingredients'
+                WHEN 'african'              THEN 'african_ingredients'
+                WHEN 'korean_ingredients'   THEN 'korean_ingredients'
+                WHEN 'korean'               THEN 'korean_ingredients'
+                WHEN 'others'               THEN 'others'
+                ELSE 'others'
+            END
+            WHERE category IS NULL
+               OR TRIM(category) = ''
+               OR category NOT IN (
+                   'anti_aging','acne','brightening','whitening','hydration',
+                   'repair','barrier','eczema','rosacea','scar','stretch_mark',
+                   'sunscreen','oils','soaps','body','masks','exfoliation',
+                   'clinical_acids','african_ingredients','korean_ingredients','others'
+               )
+        """))
+        print("✅ Category slugs backfilled")
+
         db.commit()
         print("✅ Database schema verified")
         print("🚀 Enterprise features initialized")
