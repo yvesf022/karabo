@@ -830,12 +830,12 @@ async def bulk_upload_products(
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(400, "File must be .csv format")
 
-    # Size check: 10MB max for CSV
+    # Size check: 100MB max for CSV
     file.file.seek(0, 2)
     size = file.file.tell()
     file.file.seek(0)
-    if size > 10 * 1024 * 1024:
-        raise HTTPException(400, "CSV file must not exceed 10MB")
+    if size > 100 * 1024 * 1024:
+        raise HTTPException(400, "CSV file must not exceed 100MB")
 
     upload_record = BulkUpload(
         filename=file.filename,
