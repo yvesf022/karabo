@@ -228,7 +228,7 @@ def list_products(
         query = query.filter(or_(Product.title.ilike(_like), Product.short_description.ilike(_like), Product.brand.ilike(_like)))
     if category:
         category = normalize_category(raw=category)  # guard: normalize before DB query
-        query = query.filter(Product.category == category)
+        query = query.filter(func.lower(Product.category) == category.lower())
     if main_category:
         query = query.filter(Product.main_category == main_category)
     if brand:
@@ -338,7 +338,7 @@ def admin_list_products(
         query = query.filter(Product.brand == brand)
     if category:
         category = normalize_category(raw=category)  # guard: normalize before DB query
-        query = query.filter(Product.category == category)
+        query = query.filter(func.lower(Product.category) == category.lower())
     if rating is not None:
         query = query.filter(Product.rating >= rating)
     if stock == "out" or in_stock is False:
@@ -443,7 +443,7 @@ def pricing_all_products(
         )
     if category:
         category = normalize_category(raw=category)  # guard: normalize before DB query
-        query = query.filter(Product.category == category)
+        query = query.filter(func.lower(Product.category) == category.lower())
     if brand:
         query = query.filter(Product.brand == brand)
 
@@ -1343,7 +1343,7 @@ def export_products(
         query = query.filter(Product.store == store)
     if category:
         category = normalize_category(raw=category)  # guard: normalize before DB query
-        query = query.filter(Product.category == category)
+        query = query.filter(func.lower(Product.category) == category.lower())
     products = query.order_by(Product.created_at.desc()).all()
 
     output = io.StringIO()
